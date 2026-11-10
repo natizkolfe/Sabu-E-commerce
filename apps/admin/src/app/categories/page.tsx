@@ -20,6 +20,10 @@ type CategoryNode = {
   metaTitle: string | null;
   metaDescription: string | null;
   aiStudioEnabled: boolean;
+  imageKey?: string | null;
+  iconKey?: string | null;
+  imageStorageKey?: string | null;
+  iconStorageKey?: string | null;
   children?: CategoryNode[];
 };
 
@@ -35,6 +39,15 @@ function flatten(
     if (n.children?.length) out.push(...flatten(n.children, depth + 1));
   }
   return out;
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function CategoriesAdminPage() {
@@ -53,9 +66,13 @@ export default function CategoriesAdminPage() {
   const [description, setDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [isFeatured, setIsFeatured] = useState(false);
+  const [featuredSort, setFeaturedSort] = useState(0);
   const [sortOrder, setSortOrder] = useState(0);
   const [metaTitle, setMetaTitle] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
+  const [aiStudioEnabled, setAiStudioEnabled] = useState(false);
+  const [imageStorageKey, setImageStorageKey] = useState("");
+  const [iconStorageKey, setIconStorageKey] = useState("");
 
   const flat = useMemo(() => flatten(tree), [tree]);
   const selected = flat.find((c) => c.id === selectedId) ?? null;
@@ -97,9 +114,13 @@ export default function CategoriesAdminPage() {
     setDescription(c.description ?? "");
     setIsActive(c.isActive);
     setIsFeatured(c.isFeatured);
+    setFeaturedSort(c.featuredSort ?? 0);
     setSortOrder(c.sortOrder);
     setMetaTitle(c.metaTitle ?? "");
     setMetaDescription(c.metaDescription ?? "");
+    setAiStudioEnabled(c.aiStudioEnabled);
+    setImageStorageKey(c.imageKey ?? c.imageStorageKey ?? "");
+    setIconStorageKey(c.iconKey ?? c.iconStorageKey ?? "");
     setMessage(null);
     setError(null);
   }
@@ -112,10 +133,38 @@ export default function CategoriesAdminPage() {
     setDescription("");
     setIsActive(true);
     setIsFeatured(false);
+    setFeaturedSort(0);
     setSortOrder(0);
     setMetaTitle("");
     setMetaDescription("");
+    setAiStudioEnabled(false);
+    setImageStorageKey("");
+    setIconStorageKey("");
     setAssigned([]);
+  }
+
+  async function uploadCategoryAsset(
+    file: File,
+    kind: "image" | "icon",
+  ) {
+    if (!token) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await fileToDataUrl(file);
+      const uploaded = await adminApi.uploadMedia(token, {
+        data,
+        folder: `categories/${kind}`,
+        mimeType: file.type || undefined,
+      });
+      if (kind === "image") setImageStorageKey(uploaded.storageKey);
+      else setIconStorageKey(uploaded.storageKey);
+      setMessage(`${kind === "image" ? "Image" : "Icon"} uploaded — save category to keep`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onSave(e: FormEvent) {
@@ -132,8 +181,12 @@ export default function CategoriesAdminPage() {
         sortOrder: Number(sortOrder) || 0,
         isActive,
         isFeatured,
+        featuredSort: Number(featuredSort) || 0,
+        imageStorageKey: imageStorageKey || null,
+        iconStorageKey: iconStorageKey || null,
         metaTitle: metaTitle || null,
         metaDescription: metaDescription || null,
+        aiStudioEnabled,
       };
       if (selectedId) {
         await adminApi.updateCategory(token, selectedId, body);
@@ -304,24 +357,79 @@ export default function CategoriesAdminPage() {
                     className="mt-1 w-full bg-[#17201c] px-3 py-2"
                   />
                 </label>
-                <div className="flex flex-col justify-end gap-2 pb-1 text-xs">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isActive}
-                      onChange={(e) => setIsActive(e.target.checked)}
-                    />
-                    Active on storefront
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isFeatured}
-                      onChange={(e) => setIsFeatured(e.target.checked)}
-                    />
-                    Featured on homepage
-                  </label>
-                </div>
+                <label className="block text-xs text-[#8aa897]">
+                  Featured sort
+                  <input
+                    type="number"
+                    value={featuredSort}
+                    onChange={(e) =>
+                      setFeaturedSort(Number(e.target.value) || 0)
+                    }
+                    className="mt-1 w-full bg-[#17201c] px-3 py-2"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-col gap-2 text-xs">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={isActive}
+                    onChange={(e) => setIsActive(e.target.checked)}
+                  />
+                  Active on storefront
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={isFeatured}
+                    onChange={(e) => setIsFeatured(e.target.checked)}
+                  />
+                  Featured on homepage
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={aiStudioEnabled}
+                    onChange={(e) => setAiStudioEnabled(e.target.checked)}
+                  />
+                  AI Studio enabled for this category
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-xs text-[#8aa897]">
+                  Category image
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="mt-1 block w-full text-xs"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadCategoryAsset(f, "image");
+                    }}
+                  />
+                  {imageStorageKey && (
+                    <span className="mt-1 block truncate text-[10px] text-[#8aa897]">
+                      {imageStorageKey}
+                    </span>
+                  )}
+                </label>
+                <label className="block text-xs text-[#8aa897]">
+                  Category icon
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="mt-1 block w-full text-xs"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadCategoryAsset(f, "icon");
+                    }}
+                  />
+                  {iconStorageKey && (
+                    <span className="mt-1 block truncate text-[10px] text-[#8aa897]">
+                      {iconStorageKey}
+                    </span>
+                  )}
+                </label>
               </div>
               <label className="block text-xs text-[#8aa897]">
                 SEO title

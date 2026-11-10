@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HomeDepartments } from "../components/home-departments";
 
 export default function Home() {
   return (
@@ -62,28 +63,7 @@ export default function Home() {
             From kids and fashion to home living, kitchen, beauty, and
             Ethiopian traditional goods. New categories appear as Sabu grows.
           </p>
-          <div className="mt-10 flex flex-wrap gap-2">
-            {[
-              { href: "/catalog?category=mens-fashion", label: "Men" },
-              { href: "/catalog?category=womens-fashion", label: "Women" },
-              { href: "/catalog?category=kids", label: "Kids" },
-              { href: "/catalog?category=home-living", label: "Home" },
-              { href: "/catalog?category=electronics", label: "Electronics" },
-              {
-                href: "/catalog?category=ethiopian-traditional",
-                label: "Traditional",
-              },
-              { href: "/catalog", label: "All departments →" },
-            ].map((item) => (
-              <Link
-                key={item.href + item.label}
-                href={item.href}
-                className="border border-sabu-mist px-3 py-2 text-sm text-sabu-ink transition hover:border-sabu-leaf hover:text-sabu-leaf"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
+          <HomeDepartments />
         </div>
       </section>
 

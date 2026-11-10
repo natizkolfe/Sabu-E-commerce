@@ -1,6 +1,15 @@
-const API_URL =
+export const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
   "http://localhost:3001/v1";
+
+export function mediaUrl(pathOrKey: string) {
+  if (!pathOrKey) return "";
+  if (pathOrKey.startsWith("http")) return pathOrKey;
+  if (pathOrKey.startsWith("/media/") || pathOrKey.startsWith("/studio/")) {
+    return `${API_URL}${pathOrKey}`;
+  }
+  return `${API_URL}/media/file?key=${encodeURIComponent(pathOrKey)}`;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -354,6 +363,8 @@ export const adminApi = {
       isActive?: boolean;
       isFeatured?: boolean;
       featuredSort?: number;
+      imageStorageKey?: string | null;
+      iconStorageKey?: string | null;
       metaTitle?: string | null;
       metaDescription?: string | null;
       aiStudioEnabled?: boolean;
@@ -416,10 +427,146 @@ export const adminApi = {
         id: string;
         code: string;
         name: string;
+        nameAm?: string | null;
         dataType?: string;
+        unit?: string | null;
+        isFilterable?: boolean;
         values: Array<{ id: string; code: string; label: string }>;
       }>
     >("/catalog/admin/attributes", { token });
+  },
+
+  createAttribute(
+    token: string,
+    body: {
+      code: string;
+      name: string;
+      nameAm?: string | null;
+      dataType?: string;
+      unit?: string | null;
+      isFilterable?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return request<{ id: string }>("/catalog/admin/attributes", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  updateAttribute(
+    token: string,
+    id: string,
+    body: {
+      name?: string;
+      nameAm?: string | null;
+      dataType?: string;
+      unit?: string | null;
+      isFilterable?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return request(`/catalog/admin/attributes/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  addAttributeValue(
+    token: string,
+    attributeId: string,
+    body: {
+      code: string;
+      label: string;
+      labelAm?: string | null;
+      sortOrder?: number;
+    },
+  ) {
+    return request<{ id: string }>(
+      `/catalog/admin/attributes/${attributeId}/values`,
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  listBrands(token: string) {
+    return request<
+      Array<{ id: string; slug: string; name: string; isActive: boolean }>
+    >("/catalog/admin/brands", { token });
+  },
+
+  createBrand(token: string, body: { slug: string; name: string }) {
+    return request<{ id: string }>("/catalog/admin/brands", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  setProductCategories(
+    token: string,
+    productId: string,
+    body: { categoryIds: string[]; primaryCategoryId?: string },
+  ) {
+    return request(`/catalog/admin/products/${productId}/categories`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  uploadMedia(
+    token: string,
+    body: { data: string; folder?: string; mimeType?: string },
+  ) {
+    return request<{ storageKey: string; url: string; mime: string }>(
+      "/media/upload",
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  addProductImage(
+    token: string,
+    productId: string,
+    body: {
+      storageKey: string;
+      altText?: string | null;
+      isPrimary?: boolean;
+      variantId?: string | null;
+      source?: string;
+    },
+  ) {
+    return request<{ id: string; isPrimary: boolean }>(
+      `/catalog/admin/products/${productId}/images`,
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  setPrimaryProductImage(token: string, productId: string, imageId: string) {
+    return request(
+      `/catalog/admin/products/${productId}/images/${imageId}/primary`,
+      { method: "POST", token, body: "{}" },
+    );
+  },
+
+  deleteProductImage(token: string, productId: string, imageId: string) {
+    return request(
+      `/catalog/admin/products/${productId}/images/${imageId}/delete`,
+      { method: "POST", token, body: "{}" },
+    );
   },
 
   listProducts(
@@ -456,6 +603,18 @@ export const adminApi = {
       retailNumber?: string | null;
       categoryId: string;
       categoryName: string;
+      brandId?: string | null;
+      brandName?: string | null;
+      categoryIds?: string[];
+      categories?: Array<{ id: string; name: string; isPrimary: boolean }>;
+      images?: Array<{
+        id: string;
+        storageKey: string;
+        altText: string | null;
+        isPrimary: boolean;
+        url: string;
+        source?: string;
+      }>;
       bulkPurchasingEnabled: boolean;
       returnsAllowed?: boolean;
       returnWindowDays?: number | null;
@@ -486,6 +645,8 @@ export const adminApi = {
     token: string,
     body: {
       categoryId: string;
+      categoryIds?: string[];
+      brandId?: string;
       slug: string;
       name: string;
       nameAm?: string;
@@ -512,6 +673,9 @@ export const adminApi = {
       nameAm?: string;
       description?: string;
       status?: string;
+      categoryId?: string;
+      categoryIds?: string[];
+      brandId?: string | null;
       bulkPurchasingEnabled?: boolean;
       returnsAllowed?: boolean;
       returnWindowDays?: number | null;
@@ -763,13 +927,35 @@ export const adminApi = {
         storageKey: string;
         productName: string;
         productSlug: string;
+        jobType?: string;
+        transformPreset?: string | null;
+        sourceImageKey?: string;
+        sourceUrl?: string | null;
+        previewUrl?: string;
+        modelName?: string | null;
       }>
     >("/studio/reviews/pending", { token });
   },
 
+  studioTransformPresets(token: string) {
+    return request<
+      Array<{ code: string; label: string; description: string }>
+    >("/studio/transform-presets", { token });
+  },
+
   studioGenerate(
     token: string,
-    body: { productId: string; modelId: string; variantId?: string },
+    body: {
+      productId: string;
+      modelId?: string;
+      variantId?: string;
+      sourceImageKey?: string;
+      jobType?: "try_on" | "product_transform";
+      transformPreset?:
+        | "studio_packshot"
+        | "ghost_mannequin"
+        | "background_cleanup";
+    },
   ) {
     return request("/studio/generate", {
       method: "POST",

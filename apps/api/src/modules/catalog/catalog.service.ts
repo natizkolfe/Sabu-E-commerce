@@ -623,6 +623,8 @@ export class CatalogService {
       retail_number: string | null;
       category_id: string;
       category_name: string;
+      brand_id: string | null;
+      brand_name: string | null;
       bulk_purchasing_enabled: boolean;
       returns_allowed: boolean;
       return_window_days: number | null;
@@ -633,17 +635,34 @@ export class CatalogService {
     }>(
       `SELECT p.id, p.slug, p.name, p.name_am, p.description, p.status,
               p.retail_number, p.category_id, c.name AS category_name,
+              p.brand_id, b.name AS brand_name,
               p.bulk_purchasing_enabled,
               p.returns_allowed, p.return_window_days, p.return_conditions,
               p.return_instructions, p.return_policy_description,
               p.return_policy_effective_at
        FROM catalog.products p
        JOIN catalog.categories c ON c.id = p.category_id
+       LEFT JOIN catalog.brands b ON b.id = p.brand_id
        WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [productId],
     );
     if (!rows[0]) throw new NotFoundException('Product not found');
     const p = rows[0];
+
+    const { rows: categoryLinks } = await this.db.query<{
+      category_id: string;
+      is_primary: boolean;
+      name: string;
+    }>(
+      `SELECT pc.category_id, pc.is_primary, c.name
+       FROM catalog.product_categories pc
+       JOIN catalog.categories c ON c.id = pc.category_id
+       WHERE pc.product_id = $1
+       ORDER BY pc.is_primary DESC, c.name`,
+      [productId],
+    );
+
+    const images = await this.listProductImages(productId);
 
     const { rows: variants } = await this.db.query<{
       id: string;
@@ -716,6 +735,19 @@ export class CatalogService {
       retailNumber: p.retail_number,
       categoryId: p.category_id,
       categoryName: p.category_name,
+      brandId: p.brand_id,
+      brandName: p.brand_name,
+      categoryIds: categoryLinks.length
+        ? categoryLinks.map((c) => c.category_id)
+        : [p.category_id],
+      categories: categoryLinks.length
+        ? categoryLinks.map((c) => ({
+            id: c.category_id,
+            name: c.name,
+            isPrimary: c.is_primary,
+          }))
+        : [{ id: p.category_id, name: p.category_name, isPrimary: true }],
+      images,
       bulkPurchasingEnabled: p.bulk_purchasing_enabled,
       returnsAllowed: p.returns_allowed ?? true,
       returnWindowDays: p.return_window_days ?? 7,
@@ -1409,5 +1441,265 @@ export class CatalogService {
     } finally {
       client.release();
     }
+  }
+
+  async listBrands() {
+    const { rows } = await this.db.query<{
+      id: string;
+      slug: string;
+      name: string;
+      is_active: boolean;
+    }>(
+      `SELECT id, slug, name, is_active
+       FROM catalog.brands
+       ORDER BY name`,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      name: r.name,
+      isActive: r.is_active,
+    }));
+  }
+
+  async createBrand(input: { slug: string; name: string }) {
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO catalog.brands (slug, name)
+       VALUES ($1,$2)
+       ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+       RETURNING id`,
+      [input.slug, input.name],
+    );
+    return { id: rows[0].id };
+  }
+
+  async createAttribute(input: {
+    code: string;
+    name: string;
+    nameAm?: string | null;
+    dataType?: string;
+    unit?: string | null;
+    isFilterable?: boolean;
+    sortOrder?: number;
+  }) {
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO catalog.attributes (
+         code, name, name_am, data_type, unit, is_filterable, sort_order
+       ) VALUES ($1,$2,$3,COALESCE($4,'dropdown'),$5,COALESCE($6,true),COALESCE($7,0))
+       RETURNING id`,
+      [
+        input.code,
+        input.name,
+        input.nameAm ?? null,
+        input.dataType ?? 'dropdown',
+        input.unit ?? null,
+        input.isFilterable ?? true,
+        input.sortOrder ?? 0,
+      ],
+    );
+    return { id: rows[0].id };
+  }
+
+  async updateAttribute(
+    id: string,
+    input: {
+      name?: string;
+      nameAm?: string | null;
+      dataType?: string;
+      unit?: string | null;
+      isFilterable?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    const { rowCount } = await this.db.query(
+      `UPDATE catalog.attributes SET
+         name = COALESCE($2, name),
+         name_am = COALESCE($3, name_am),
+         data_type = COALESCE($4, data_type),
+         unit = CASE WHEN $5::boolean THEN $6 ELSE unit END,
+         is_filterable = COALESCE($7, is_filterable),
+         sort_order = COALESCE($8, sort_order)
+       WHERE id = $1`,
+      [
+        id,
+        input.name ?? null,
+        input.nameAm ?? null,
+        input.dataType ?? null,
+        input.unit !== undefined,
+        input.unit ?? null,
+        input.isFilterable ?? null,
+        input.sortOrder ?? null,
+      ],
+    );
+    if (!rowCount) throw new NotFoundException('Attribute not found');
+    return { ok: true };
+  }
+
+  async addAttributeValue(input: {
+    attributeId: string;
+    code: string;
+    label: string;
+    labelAm?: string | null;
+    sortOrder?: number;
+  }) {
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO catalog.attribute_values (
+         attribute_id, code, label, label_am, sort_order
+       ) VALUES ($1,$2,$3,$4,COALESCE($5,0))
+       ON CONFLICT (attribute_id, code) DO UPDATE
+         SET label = EXCLUDED.label,
+             label_am = EXCLUDED.label_am,
+             sort_order = EXCLUDED.sort_order
+       RETURNING id`,
+      [
+        input.attributeId,
+        input.code,
+        input.label,
+        input.labelAm ?? null,
+        input.sortOrder ?? 0,
+      ],
+    );
+    return { id: rows[0].id };
+  }
+
+  async listProductImages(productId: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      storage_key: string;
+      alt_text: string | null;
+      sort_order: number;
+      is_primary: boolean;
+      variant_id: string | null;
+      source: string;
+    }>(
+      `SELECT id, storage_key, alt_text, sort_order, is_primary, variant_id,
+              COALESCE(source, 'upload') AS source
+       FROM catalog.product_images
+       WHERE product_id = $1
+       ORDER BY is_primary DESC, sort_order, created_at`,
+      [productId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      storageKey: r.storage_key,
+      altText: r.alt_text,
+      sortOrder: r.sort_order,
+      isPrimary: r.is_primary,
+      variantId: r.variant_id,
+      source: r.source,
+      url: `/media/file?key=${encodeURIComponent(r.storage_key)}`,
+    }));
+  }
+
+  async addProductImage(input: {
+    productId: string;
+    storageKey: string;
+    altText?: string | null;
+    variantId?: string | null;
+    isPrimary?: boolean;
+    source?: string;
+  }) {
+    const { rows: products } = await this.db.query<{ id: string }>(
+      `SELECT id FROM catalog.products WHERE id = $1 AND deleted_at IS NULL`,
+      [input.productId],
+    );
+    if (!products[0]) throw new NotFoundException('Product not found');
+
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      if (input.isPrimary) {
+        await client.query(
+          `UPDATE catalog.product_images SET is_primary = false WHERE product_id = $1`,
+          [input.productId],
+        );
+      }
+      const { rows: countRows } = await client.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM catalog.product_images WHERE product_id = $1`,
+        [input.productId],
+      );
+      const makePrimary =
+        input.isPrimary === true || Number(countRows[0]?.c ?? 0) === 0;
+      if (makePrimary) {
+        await client.query(
+          `UPDATE catalog.product_images SET is_primary = false WHERE product_id = $1`,
+          [input.productId],
+        );
+      }
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO catalog.product_images (
+           product_id, variant_id, storage_key, alt_text, sort_order, is_primary, source
+         ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'upload'))
+         RETURNING id`,
+        [
+          input.productId,
+          input.variantId ?? null,
+          input.storageKey,
+          input.altText ?? null,
+          Number(countRows[0]?.c ?? 0) * 10,
+          makePrimary,
+          input.source ?? 'upload',
+        ],
+      );
+      await client.query('COMMIT');
+      return { id: rows[0].id, isPrimary: makePrimary };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setPrimaryProductImage(productId: string, imageId: string) {
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT id FROM catalog.product_images
+         WHERE id = $1 AND product_id = $2`,
+        [imageId, productId],
+      );
+      if (!rows[0]) throw new NotFoundException('Image not found');
+      await client.query(
+        `UPDATE catalog.product_images SET is_primary = false WHERE product_id = $1`,
+        [productId],
+      );
+      await client.query(
+        `UPDATE catalog.product_images SET is_primary = true WHERE id = $1`,
+        [imageId],
+      );
+      await client.query('COMMIT');
+      return { ok: true };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteProductImage(productId: string, imageId: string) {
+    const { rows } = await this.db.query<{ id: string; is_primary: boolean }>(
+      `DELETE FROM catalog.product_images
+       WHERE id = $1 AND product_id = $2
+       RETURNING id, is_primary`,
+      [imageId, productId],
+    );
+    if (!rows[0]) throw new NotFoundException('Image not found');
+    if (rows[0].is_primary) {
+      await this.db.query(
+        `UPDATE catalog.product_images
+         SET is_primary = true
+         WHERE id = (
+           SELECT id FROM catalog.product_images
+           WHERE product_id = $1
+           ORDER BY sort_order, created_at
+           LIMIT 1
+         )`,
+        [productId],
+      );
+    }
+    return { ok: true };
   }
 }

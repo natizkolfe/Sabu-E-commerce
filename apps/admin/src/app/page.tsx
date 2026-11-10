@@ -16,6 +16,7 @@ const nav = [
   { href: "/orders", label: "Orders" },
   { href: "/products", label: "Products & prices" },
   { href: "/categories", label: "Categories" },
+  { href: "/attributes", label: "Attributes" },
   { href: "/vendors", label: "Vendors" },
   { href: "/commissions", label: "Commissions" },
   { href: "/special-orders", label: "Special Orders" },
@@ -24,7 +25,7 @@ const nav = [
   { href: "/deliveries", label: "Delivery dispatch" },
   { href: "/delivery-settings", label: "Delivery pricing" },
   { href: "/payments", label: "Payment verification" },
-  { href: "/studio", label: "AI Studio" },
+  { href: "/studio", label: "AI Image Studio" },
 ];
 
 export default function AdminHome() {

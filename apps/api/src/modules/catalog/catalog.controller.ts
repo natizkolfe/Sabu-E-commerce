@@ -155,6 +155,131 @@ class SetAttributesDto {
   attributeValueIds!: string[];
 }
 
+class CreateAttributeDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(64)
+  code!: string;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  nameAm?: string | null;
+
+  @IsOptional()
+  @IsIn([
+    'text',
+    'number',
+    'dropdown',
+    'multi_select',
+    'boolean',
+    'color',
+    'measurement',
+  ])
+  dataType?: string;
+
+  @IsOptional()
+  @IsString()
+  unit?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isFilterable?: boolean;
+
+  @IsOptional()
+  sortOrder?: number;
+}
+
+class UpdateAttributeDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  nameAm?: string | null;
+
+  @IsOptional()
+  @IsIn([
+    'text',
+    'number',
+    'dropdown',
+    'multi_select',
+    'boolean',
+    'color',
+    'measurement',
+  ])
+  dataType?: string;
+
+  @IsOptional()
+  @IsString()
+  unit?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isFilterable?: boolean;
+
+  @IsOptional()
+  sortOrder?: number;
+}
+
+class CreateAttributeValueDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  code!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  label!: string;
+
+  @IsOptional()
+  @IsString()
+  labelAm?: string | null;
+
+  @IsOptional()
+  sortOrder?: number;
+}
+
+class CreateBrandDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  slug!: string;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(160)
+  name!: string;
+}
+
+class AddProductImageDto {
+  @IsString()
+  @MinLength(3)
+  storageKey!: string;
+
+  @IsOptional()
+  @IsString()
+  altText?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  variantId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isPrimary?: boolean;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+}
+
 class CreateCategoryDto {
   @IsOptional()
   @IsUUID()
@@ -462,6 +587,75 @@ export class CatalogController {
   @RequirePermissions('catalog.write')
   attributes() {
     return this.catalogService.listAttributes();
+  }
+
+  @Post('admin/attributes')
+  @RequirePermissions('catalog.write')
+  createAttribute(@Body() dto: CreateAttributeDto) {
+    return this.catalogService.createAttribute(dto);
+  }
+
+  @Patch('admin/attributes/:id')
+  @RequirePermissions('catalog.write')
+  updateAttribute(@Param('id') id: string, @Body() dto: UpdateAttributeDto) {
+    return this.catalogService.updateAttribute(id, dto);
+  }
+
+  @Post('admin/attributes/:id/values')
+  @RequirePermissions('catalog.write')
+  addAttributeValue(
+    @Param('id') id: string,
+    @Body() dto: CreateAttributeValueDto,
+  ) {
+    return this.catalogService.addAttributeValue({
+      attributeId: id,
+      ...dto,
+    });
+  }
+
+  @Get('admin/brands')
+  @RequirePermissions('catalog.write')
+  brands() {
+    return this.catalogService.listBrands();
+  }
+
+  @Post('admin/brands')
+  @RequirePermissions('catalog.write')
+  createBrand(@Body() dto: CreateBrandDto) {
+    return this.catalogService.createBrand(dto);
+  }
+
+  @Get('admin/products/:id/images')
+  @RequirePermissions('catalog.write')
+  productImages(@Param('id') id: string) {
+    return this.catalogService.listProductImages(id);
+  }
+
+  @Post('admin/products/:id/images')
+  @RequirePermissions('catalog.write')
+  addProductImage(@Param('id') id: string, @Body() dto: AddProductImageDto) {
+    return this.catalogService.addProductImage({
+      productId: id,
+      ...dto,
+    });
+  }
+
+  @Post('admin/products/:id/images/:imageId/primary')
+  @RequirePermissions('catalog.write')
+  setPrimaryImage(
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.catalogService.setPrimaryProductImage(id, imageId);
+  }
+
+  @Post('admin/products/:id/images/:imageId/delete')
+  @RequirePermissions('catalog.write')
+  deleteProductImage(
+    @Param('id') id: string,
+    @Param('imageId') imageId: string,
+  ) {
+    return this.catalogService.deleteProductImage(id, imageId);
   }
 
   @Post('admin/variants/:id/attributes')

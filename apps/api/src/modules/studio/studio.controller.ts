@@ -7,7 +7,13 @@ import {
   Post,
   Res,
 } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsUUID } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import type { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
@@ -23,11 +29,24 @@ class GenerateDto {
   @IsUUID()
   variantId?: string;
 
+  @IsOptional()
   @IsUUID()
-  modelId!: string;
+  modelId?: string;
 
   @IsOptional()
+  @IsString()
   sourceImageKey?: string;
+
+  @IsOptional()
+  @IsIn(['try_on', 'product_transform'])
+  jobType?: 'try_on' | 'product_transform';
+
+  @IsOptional()
+  @IsIn(['studio_packshot', 'ghost_mannequin', 'background_cleanup'])
+  transformPreset?:
+    | 'studio_packshot'
+    | 'ghost_mannequin'
+    | 'background_cleanup';
 }
 
 class ReviewDto {
@@ -50,6 +69,12 @@ export class StudioController {
   @RequirePermissions('studio.generate')
   models() {
     return this.studio.listModels();
+  }
+
+  @Get('transform-presets')
+  @RequirePermissions('studio.generate')
+  transformPresets() {
+    return this.studio.listTransformPresets();
   }
 
   @Public()

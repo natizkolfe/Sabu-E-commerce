@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { adminApi, ApiError } from "../../lib/api";
+import { API_URL, adminApi, ApiError } from "../../lib/api";
 import { loadSession } from "../../lib/session";
 
 type ProductListItem = Awaited<ReturnType<typeof adminApi.listProducts>>[number];
 type ProductDetail = Awaited<ReturnType<typeof adminApi.getProduct>>;
 type Category = Awaited<ReturnType<typeof adminApi.listCategories>>[number];
+type Brand = Awaited<ReturnType<typeof adminApi.listBrands>>[number];
 
 function slugify(value: string) {
   return value
@@ -18,10 +19,20 @@ function slugify(value: string) {
     .slice(0, 80);
 }
 
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ProductsAdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [items, setItems] = useState<ProductListItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
   const [q, setQ] = useState("");
@@ -35,6 +46,8 @@ export default function ProductsAdminPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editStatus, setEditStatus] = useState("active");
   const [editBulk, setEditBulk] = useState(false);
+  const [editBrandId, setEditBrandId] = useState("");
+  const [editCategoryIds, setEditCategoryIds] = useState<string[]>([]);
   const [editReturnsAllowed, setEditReturnsAllowed] = useState(true);
   const [editReturnDays, setEditReturnDays] = useState("7");
   const [editReturnConditions, setEditReturnConditions] = useState("");
@@ -45,6 +58,7 @@ export default function ProductsAdminPage() {
   const [newName, setNewName] = useState("");
   const [newSlug, setNewSlug] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
+  const [newBrandId, setNewBrandId] = useState("");
   const [newStatus, setNewStatus] = useState("draft");
   const [newBulk, setNewBulk] = useState(false);
 
@@ -86,9 +100,13 @@ export default function ProductsAdminPage() {
     const s = loadSession();
     if (!s) return;
     setToken(s.accessToken);
-    adminApi.listCategories(s.accessToken).then((cats) => {
+    Promise.all([
+      adminApi.listCategories(s.accessToken),
+      adminApi.listBrands(s.accessToken),
+    ]).then(([cats, brandRows]) => {
       setCategories(cats);
       setNewCategoryId(cats[0]?.id ?? "");
+      setBrands(brandRows);
     });
   }, []);
 
@@ -110,6 +128,10 @@ export default function ProductsAdminPage() {
     setEditDescription(p.description ?? "");
     setEditStatus(p.status);
     setEditBulk(p.bulkPurchasingEnabled);
+    setEditBrandId(p.brandId ?? "");
+    setEditCategoryIds(
+      p.categoryIds?.length ? p.categoryIds : [p.categoryId],
+    );
     setEditReturnsAllowed(p.returnsAllowed !== false);
     setEditReturnDays(String(p.returnWindowDays ?? 7));
     setEditReturnConditions(p.returnConditions ?? "");
@@ -132,11 +154,17 @@ export default function ProductsAdminPage() {
     setBusy(true);
     setError(null);
     try {
+      const categoryIds = editCategoryIds.length
+        ? editCategoryIds
+        : [detail.categoryId];
       const next = await adminApi.updateProduct(token, detail.id, {
         name: editName,
         nameAm: editNameAm || undefined,
         description: editDescription || undefined,
         status: editStatus,
+        brandId: editBrandId || null,
+        categoryId: categoryIds[0],
+        categoryIds,
         bulkPurchasingEnabled: editBulk,
         returnsAllowed: editReturnsAllowed,
         returnWindowDays: editReturnsAllowed
@@ -164,6 +192,8 @@ export default function ProductsAdminPage() {
     try {
       const created = await adminApi.createProduct(token, {
         categoryId: newCategoryId,
+        categoryIds: [newCategoryId],
+        brandId: newBrandId || undefined,
         slug: newSlug || slugify(newName),
         name: newName,
         status: newStatus,
@@ -264,6 +294,31 @@ export default function ProductsAdminPage() {
         ? String(selectedVariant.wholesaleQty10)
         : "",
     );
+  }
+
+  async function uploadProductImage(file: File) {
+    if (!token || !detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await fileToDataUrl(file);
+      const uploaded = await adminApi.uploadMedia(token, {
+        data,
+        folder: `products/${detail.id}`,
+        mimeType: file.type || undefined,
+      });
+      await adminApi.addProductImage(token, detail.id, {
+        storageKey: uploaded.storageKey,
+        isPrimary: !(detail.images?.length),
+        source: "upload",
+      });
+      setMessage("Image uploaded");
+      await openProduct(detail.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!token) {
@@ -407,6 +462,18 @@ export default function ProductsAdminPage() {
                     </option>
                   ))}
                 </select>
+                <select
+                  value={newBrandId}
+                  onChange={(e) => setNewBrandId(e.target.value)}
+                  className="w-full bg-[#17201c] px-3 py-2 text-sm"
+                >
+                  <option value="">No brand</option>
+                  {brands.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
                 <div className="flex flex-wrap gap-3">
                   <select
                     value={newStatus}
@@ -479,6 +546,50 @@ export default function ProductsAdminPage() {
                     placeholder="Description"
                     className="w-full bg-[#17201c] px-3 py-2 text-sm"
                   />
+                  <label className="block text-xs text-[#8aa897]">
+                    Brand
+                    <select
+                      value={editBrandId}
+                      onChange={(e) => setEditBrandId(e.target.value)}
+                      className="mt-1 w-full bg-[#17201c] px-3 py-2 text-sm"
+                    >
+                      <option value="">No brand</option>
+                      {brands.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <p className="text-xs text-[#8aa897]">Categories</p>
+                    <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto text-sm">
+                      {categories.map((c) => {
+                        const checked = editCategoryIds.includes(c.id);
+                        return (
+                          <li key={c.id}>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  setEditCategoryIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, c.id]
+                                      : prev.filter((id) => id !== c.id),
+                                  );
+                                }}
+                              />
+                              {c.name}
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="mt-1 text-[11px] text-[#8aa897]">
+                      First checked category becomes primary.
+                    </p>
+                  </div>
                   <div className="flex flex-wrap gap-3">
                     <select
                       value={editStatus}
@@ -565,6 +676,83 @@ export default function ProductsAdminPage() {
                     Save product
                   </button>
                 </form>
+
+                <div className="border-t border-[#24302a] pt-4">
+                  <h3 className="text-sm text-[#8aa897]">Product images</h3>
+                  <p className="mt-1 text-[11px] text-[#8aa897]">
+                    Upload phone photos here, then enhance them in AI Studio.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(detail.images ?? []).map((img) => (
+                      <div
+                        key={img.id}
+                        className="relative w-20 overflow-hidden rounded-md border border-[#24302a]"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={
+                            img.url?.startsWith("http")
+                              ? img.url
+                              : `${API_URL}${img.url}`
+                          }
+                          alt={img.altText ?? ""}
+                          className="aspect-[3/4] w-full object-cover"
+                        />
+                        <div className="flex flex-col gap-0.5 p-1">
+                          {img.isPrimary ? (
+                            <span className="text-[9px] text-[#9dcdb4]">
+                              Primary
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-[9px] text-[#8aa897]"
+                              onClick={async () => {
+                                if (!token) return;
+                                await adminApi.setPrimaryProductImage(
+                                  token,
+                                  detail.id,
+                                  img.id,
+                                );
+                                await openProduct(detail.id);
+                              }}
+                            >
+                              Make primary
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="text-[9px] text-red-400"
+                            onClick={async () => {
+                              if (!token) return;
+                              await adminApi.deleteProductImage(
+                                token,
+                                detail.id,
+                                img.id,
+                              );
+                              await openProduct(detail.id);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <label className="mt-3 inline-block cursor-pointer border border-[#24302a] px-3 py-2 text-xs">
+                    Upload image
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void uploadProductImage(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
 
                 <div className="border-t border-[#24302a] pt-4">
                   <h3 className="text-sm text-[#8aa897]">Variants</h3>
