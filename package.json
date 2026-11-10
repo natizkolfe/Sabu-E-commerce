@@ -1,0 +1,24 @@
+{
+  "name": "sabu-ecommerce",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Ethiopian E-Commerce & ERP — modular monolith (NestJS + PostgreSQL/PostGIS + Redis + Next.js)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev -w @sabu/api",
+    "dev:web": "npm run dev -w @sabu/web",
+    "dev:admin": "npm run dev -w @sabu/admin",
+    "build": "npm run build -w @sabu/api && npm run build -w @sabu/web && npm run build -w @sabu/admin",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run migrate -w @sabu/db",
+    "db:reset": "npm run reset -w @sabu/db",
+    "lint": "npm run lint -ws --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

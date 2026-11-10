@@ -1,0 +1,13 @@
+{
+  "name": "@sabu/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PostgreSQL schema, migrations, and seed for Sabu E-Commerce & ERP",
+  "scripts": {
+    "migrate": "node ./scripts/migrate.js",
+    "reset": "node ./scripts/migrate.js --reset"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}

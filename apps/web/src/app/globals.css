@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+:root {
+  --sabu-ink: #07140f;
+  --sabu-forest: #0b1f17;
+  --sabu-leaf: #1a4d3a;
+  --sabu-moss: #3d6b56;
+  --sabu-mist: #9bc4b0;
+  --sabu-cream: #e8f5ee;
+  --sabu-paper: #f3f7f4;
+  --sabu-gold: #c4a35a;
+  --background: var(--sabu-paper);
+  --foreground: var(--sabu-ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sabu-ink: var(--sabu-ink);
+  --color-sabu-forest: var(--sabu-forest);
+  --color-sabu-leaf: var(--sabu-leaf);
+  --color-sabu-moss: var(--sabu-moss);
+  --color-sabu-mist: var(--sabu-mist);
+  --color-sabu-cream: var(--sabu-cream);
+  --color-sabu-paper: var(--sabu-paper);
+  --color-sabu-gold: var(--sabu-gold);
+  --font-display: var(--font-syne);
+  --font-sans: var(--font-manrope);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-manrope), system-ui, sans-serif;
+}
+
+@keyframes sabu-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sabu-glow {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes sabu-sheen {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+.sabu-rise {
+  animation: sabu-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sabu-rise-delay-1 {
+  animation-delay: 0.12s;
+}
+
+.sabu-rise-delay-2 {
+  animation-delay: 0.24s;
+}
+
+.sabu-rise-delay-3 {
+  animation-delay: 0.36s;
+}
+
+.sabu-hero-glow {
+  animation: sabu-glow 10s ease-in-out infinite;
+}
+
+.sabu-gradient-shift {
+  background-size: 200% 200%;
+  animation: sabu-sheen 14s ease-in-out infinite alternate;
+}
