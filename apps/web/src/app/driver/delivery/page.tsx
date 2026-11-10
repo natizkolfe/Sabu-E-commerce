@@ -15,8 +15,18 @@ type Dashboard = {
   packageCount: number;
   distanceKm: number | null;
   etaMinutes: number | null;
+  instructions?: string | null;
+  landmarkName?: string | null;
+  locationType?: string | null;
+  recipientPhone?: string | null;
+  googleMapsUrl?: string | null;
   pickup: { name: string; address: string | null };
-  dropoff: { name: string; address: string };
+  dropoff: {
+    name: string;
+    address: string;
+    lng?: number | null;
+    lat?: number | null;
+  };
   items: Array<{ name: string; sku: string | null; quantity: number }>;
 };
 
@@ -146,11 +156,59 @@ function DeliveryInner() {
           <p className="text-[11px] text-[#8aa897] uppercase">Drop-off</p>
           <p>{data.dropoff.name}</p>
           <p className="text-[#9eb0a6]">{data.dropoff.address}</p>
+          {data.landmarkName && (
+            <p className="mt-1 text-[#9dcdb4]">
+              Nearest landmark: {data.landmarkName}
+              {data.locationType === "landmark_nearby"
+                ? " (reference — not always the door)"
+                : ""}
+            </p>
+          )}
+          {data.instructions && (
+            <p className="mt-1 text-[#b7c7be]">
+              Instructions: {data.instructions}
+            </p>
+          )}
+          {data.dropoff.lat != null && data.dropoff.lng != null && (
+            <p className="mt-1 text-[11px] text-[#8aa897]">
+              {data.dropoff.lat.toFixed(5)}, {data.dropoff.lng.toFixed(5)}
+            </p>
+          )}
         </div>
         <p className="text-[#b7c7be]">
           {data.distanceKm ?? "—"} km · ETA {data.etaMinutes ?? "—"} min ·{" "}
           {data.packageCount} packages
         </p>
+        <div className="flex flex-wrap gap-2 pt-1">
+          {data.googleMapsUrl && (
+            <a
+              href={data.googleMapsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="bg-[#2f6b4f] px-3 py-2 text-xs"
+            >
+              Open in Google Maps
+            </a>
+          )}
+          {data.googleMapsUrl && (
+            <a
+              href={data.googleMapsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="border border-[#24302a] px-3 py-2 text-xs"
+            >
+              Navigate to destination
+            </a>
+          )}
+          {data.recipientPhone && (
+            <a
+              href={`tel:${data.recipientPhone}`}
+              className="border border-[#24302a] px-3 py-2 text-xs"
+            >
+              Call customer
+            </a>
+          )}
+        </div>
       </div>
 
       <ul className="mt-4 space-y-1 text-sm text-[#b7c7be]">

@@ -8,7 +8,10 @@ import {
 import { createHash, randomBytes } from 'crypto';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../../database/database.service';
+import { DeliveryService } from '../delivery/delivery.service';
 import { AuthUser } from '../iam/auth.types';
+import { NotifyService } from '../notify/notify.service';
+import { WhatsAppService } from '../notify/whatsapp.service';
 import { PricingService } from '../pricing/pricing.service';
 import { AddCartItemDto } from './dto/cart-item.dto';
 import { CheckoutDto } from './dto/checkout.dto';
@@ -27,6 +30,9 @@ export class SalesService {
   constructor(
     private readonly db: DatabaseService,
     private readonly pricing: PricingService,
+    private readonly delivery: DeliveryService,
+    private readonly notify: NotifyService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
 
   async getCart(user: AuthUser) {
@@ -80,7 +86,6 @@ export class SalesService {
     opts: { user?: AuthUser; guestToken?: string },
   ) {
     const fulfillmentType = dto.fulfillmentType ?? 'local_delivery';
-    const deliveryFee = fulfillmentType === 'local_delivery' ? 150 : 0;
     const listCode = dto.priceListCode ?? 'RETAIL-ETB';
     const preferredChannel = dto.preferredContactChannel;
     if (!preferredChannel) {
@@ -90,6 +95,28 @@ export class SalesService {
       preferredChannel === 'phone' || preferredChannel === 'sms';
     const contactConsentAt =
       dto.contactConsent === false ? null : new Date().toISOString();
+
+    if (fulfillmentType === 'local_delivery') {
+      if (!dto.locationConfirmed) {
+        throw new BadRequestException(
+          'Confirm your delivery location on the map before placing the order',
+        );
+      }
+      if (
+        dto.lng == null ||
+        dto.lat == null ||
+        Number.isNaN(dto.lng) ||
+        Number.isNaN(dto.lat)
+      ) {
+        throw new BadRequestException('Delivery map coordinates are required');
+      }
+    }
+
+    if (!dto.amountAcknowledged) {
+      throw new BadRequestException(
+        'Acknowledge the final payable amount before placing the order',
+      );
+    }
 
     if (dto.idempotencyKey) {
       const existing = await this.findByIdempotency(dto.idempotencyKey);
@@ -149,9 +176,16 @@ export class SalesService {
         product_name: string;
         variant_name: string | null;
         bulk_purchasing_enabled: boolean;
+        returns_allowed: boolean;
+        return_window_days: number | null;
+        return_conditions: string | null;
+        return_instructions: string | null;
+        return_policy_description: string | null;
       }>(
         `SELECT ci.id AS item_id, ci.variant_id, ci.quantity, pv.sku,
-                p.name AS product_name, pv.variant_name, p.bulk_purchasing_enabled
+                p.name AS product_name, pv.variant_name, p.bulk_purchasing_enabled,
+                p.returns_allowed, p.return_window_days, p.return_conditions,
+                p.return_instructions, p.return_policy_description
          FROM sales.cart_items ci
          JOIN catalog.product_variants pv ON pv.id = ci.variant_id
          JOIN catalog.products p ON p.id = pv.product_id
@@ -209,12 +243,79 @@ export class SalesService {
       }
 
       const subtotal = round2(priced.reduce((s, l) => s + l.lineTotal, 0));
+
+      let deliveryFee = 0;
+      let deliveryDistanceKm: number | null = null;
+      let deliveryFeeRate: number | null = null;
+      let deliveryRouteSource: string | null = null;
+      let deliveryPricingSnapshot: Record<string, unknown> = {};
+      let deliveryServiceType: 'standard' | 'express' | null = null;
+      let deliveryEtaMinutes: number | null = null;
+      let deliveryEtaWindowText: string | null = null;
+      let deliveryEtaDisclaimer: string | null = null;
+
+      if (fulfillmentType === 'local_delivery') {
+        const serviceType =
+          dto.deliveryServiceType === 'express' ? 'express' : 'standard';
+        const quote = await this.delivery.quoteDelivery({
+          lat: dto.lat,
+          lng: dto.lng,
+          subtotal,
+          serviceType,
+        });
+        if (quote.pendingAdmin || quote.deliveryFee == null) {
+          throw new BadRequestException(
+            'Delivery quote pending administrator confirmation — confirm your map pin',
+          );
+        }
+        const fee = quote.deliveryFee;
+        const dist = quote.distanceKm;
+        const rate = quote.feePerKm;
+        const route = quote.routeSource;
+        deliveryFee = fee;
+        deliveryDistanceKm = dist;
+        deliveryFeeRate = rate;
+        deliveryRouteSource = route;
+        deliveryServiceType = serviceType;
+        deliveryEtaMinutes =
+          'etaMinutes' in quote && quote.etaMinutes != null
+            ? Number(quote.etaMinutes)
+            : null;
+        deliveryEtaWindowText =
+          'etaWindowText' in quote && typeof quote.etaWindowText === 'string'
+            ? quote.etaWindowText
+            : null;
+        deliveryEtaDisclaimer =
+          'etaDisclaimer' in quote && typeof quote.etaDisclaimer === 'string'
+            ? quote.etaDisclaimer
+            : null;
+        deliveryPricingSnapshot =
+          'snapshot' in quote && quote.snapshot
+            ? quote.snapshot
+            : {
+                distanceKm: dist,
+                feePerKm: rate,
+                deliveryFee: fee,
+                routeSource: route,
+                serviceType,
+              };
+      }
+
       const grandTotal = round2(subtotal + deliveryFee);
       const orderNumber = await this.nextDocNumber(client, 'SABU');
       // Guests always get a track token; signed-in customers get one too so
       // confirmation + shareable tracking work without requiring login.
       const trackToken = randomBytes(24).toString('base64url');
       const trackHash = sha256(trackToken);
+
+      const locationType =
+        dto.locationType ??
+        (dto.landmarkName ? 'landmark_nearby' : 'exact');
+      const locationSource = dto.locationSource ?? 'manual_pin';
+      const deliveryInstructions =
+        dto.deliveryInstructions?.trim() || dto.customerNote || null;
+      const formattedAddress =
+        dto.formattedAddress?.trim() || dto.addressText;
 
       const { rows: orders } = await client.query<{ id: string }>(
         `INSERT INTO sales.orders (
@@ -224,12 +325,26 @@ export class SalesService {
            ship_recipient_name, ship_recipient_phone, ship_address_text, ship_location,
            customer_note, placed_at, idempotency_key,
            guest_track_token_hash, guest_phone_e164,
-           preferred_contact_channel, requires_manual_contact, contact_consent_at
+           preferred_contact_channel, requires_manual_contact, contact_consent_at,
+           landmark_name, landmark_place_id, landmark_location,
+           formatted_address, delivery_instructions, location_type, location_source,
+           location_confirmed_at, landmark_lng, landmark_lat,
+           delivery_distance_km, delivery_fee_rate, delivery_route_source,
+           delivery_pricing_snapshot, delivery_service_type,
+           delivery_eta_minutes, delivery_eta_window_text, delivery_eta_disclaimer
          ) VALUES (
-           $1,$2,'retail',$3,'web',$4,$5,'pending_payment','unpaid','ETB',
+           $1,$2,'retail',$3,'web',$4,$5,'pending_payment','pending_verification','ETB',
            $6,0,0,$7,$8,$9,$10,$11,
            ST_SetSRID(ST_MakePoint($12,$13),4326)::geography,
-           $14, now(), $15, $16, $17, $18, $19, $20
+           $14, now(), $15, $16, $17, $18, $19, $20,
+           $21, $22,
+           CASE WHEN $23::float8 IS NOT NULL AND $24::float8 IS NOT NULL
+             THEN ST_SetSRID(ST_MakePoint($23,$24),4326)::geography
+             ELSE NULL END,
+           $25, $26, $27, $28,
+           CASE WHEN $29::boolean THEN now() ELSE NULL END,
+           $23, $24,
+           $30, $31, $32, $33::jsonb, $34, $35, $36, $37
          ) RETURNING id`,
         [
           orderNumber,
@@ -252,17 +367,42 @@ export class SalesService {
           preferredChannel,
           requiresManualContact,
           contactConsentAt,
+          dto.landmarkName ?? null,
+          dto.landmarkPlaceId ?? null,
+          dto.landmarkLng ?? null,
+          dto.landmarkLat ?? null,
+          formattedAddress,
+          deliveryInstructions,
+          locationType,
+          locationSource,
+          dto.locationConfirmed === true,
+          deliveryDistanceKm,
+          deliveryFeeRate,
+          deliveryRouteSource,
+          JSON.stringify(deliveryPricingSnapshot),
+          deliveryServiceType,
+          deliveryEtaMinutes,
+          deliveryEtaWindowText,
+          deliveryEtaDisclaimer,
         ],
       );
       const orderId = orders[0].id;
 
       let lineNo = 1;
       for (const line of priced) {
+        const returnsAllowed = line.returns_allowed !== false;
+        const returnLabel = returnsAllowed
+          ? `Returns within ${line.return_window_days ?? 7} day(s)`
+          : 'No Returns Available for This Item.';
         const { rows: items } = await client.query<{ id: string }>(
           `INSERT INTO sales.order_items (
              order_id, line_no, variant_id, sku_snapshot, name_snapshot,
-             quantity, unit_price, price_list_item_id, tax_rate, tax_amount, line_total
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9) RETURNING id`,
+             quantity, unit_price, price_list_item_id, tax_rate, tax_amount, line_total,
+             returns_allowed_snapshot, return_window_days_snapshot,
+             return_conditions_snapshot, return_instructions_snapshot,
+             return_policy_description_snapshot, return_policy_label_snapshot
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,$10,$11,$12,$13,$14,$15)
+           RETURNING id`,
           [
             orderId,
             lineNo++,
@@ -273,6 +413,12 @@ export class SalesService {
             line.unit,
             line.priceListItemId,
             line.lineTotal,
+            returnsAllowed,
+            returnsAllowed ? (line.return_window_days ?? 7) : null,
+            line.return_conditions ?? null,
+            line.return_instructions ?? null,
+            line.return_policy_description ?? null,
+            returnLabel,
           ],
         );
         await client.query(
@@ -302,14 +448,90 @@ export class SalesService {
         [dto.paymentMethodId],
       );
       if (!methods[0]) throw new BadRequestException('Invalid payment method');
-      const { rows: intents } = await client.query<{ id: string }>(
-        `INSERT INTO payments.payment_intents (order_id, purpose, amount, currency, status)
-         VALUES ($1, 'full', $2, 'ETB', 'pending') RETURNING id`,
-        [orderId, grandTotal],
-      );
-      const paymentIntentId = intents[0].id;
       const paymentMethodCode = methods[0].code;
       const paymentMethodDisplayName = methods[0].display_name;
+
+      let telebirrTxnId: string | null = null;
+      if (paymentMethodCode === 'telebirr_manual') {
+        const { rows: tbSettings } = await client.query<{
+          txn_format_regex: string;
+        }>(
+          `SELECT txn_format_regex FROM payments.telebirr_merchant_settings WHERE id = 1`,
+        );
+        const regex =
+          tbSettings[0]?.txn_format_regex ?? '^[A-Za-z0-9\\-]{6,40}$';
+        telebirrTxnId = dto.telebirrTxnId?.trim() ?? '';
+        if (!telebirrTxnId) {
+          throw new BadRequestException('Telebirr transaction ID is required');
+        }
+        let ok = false;
+        try {
+          ok = new RegExp(regex).test(telebirrTxnId);
+        } catch {
+          ok = /^[A-Za-z0-9-]{6,40}$/.test(telebirrTxnId);
+        }
+        if (!ok) {
+          throw new BadRequestException(
+            'Telebirr transaction ID format is invalid',
+          );
+        }
+        const { rows: dupes } = await client.query<{ id: string }>(
+          `SELECT t.id FROM payments.payment_transactions t
+           JOIN payments.payment_methods m ON m.id = t.payment_method_id
+           WHERE m.code = 'telebirr_manual'
+             AND t.provider_reference IS NOT NULL
+             AND lower(t.provider_reference) = lower($1)
+             AND t.status IN ('pending','succeeded')
+           LIMIT 1`,
+          [telebirrTxnId],
+        );
+        if (dupes[0]) {
+          throw new ConflictException(
+            'This Telebirr transaction ID was already submitted',
+          );
+        }
+      }
+
+      const { rows: intents } = await client.query<{ id: string }>(
+        `INSERT INTO payments.payment_intents (order_id, purpose, amount, currency, status)
+         VALUES ($1, 'full', $2, 'ETB', $3) RETURNING id`,
+        [
+          orderId,
+          grandTotal,
+          paymentMethodCode === 'telebirr_manual' ? 'processing' : 'pending',
+        ],
+      );
+      const paymentIntentId = intents[0].id;
+
+      if (paymentMethodCode === 'telebirr_manual' && telebirrTxnId) {
+        const merchantRef = `TB-${orderNumber}-${randomBytes(3).toString('hex')}`;
+        const { rows: txs } = await client.query<{ id: string }>(
+          `INSERT INTO payments.payment_transactions (
+             payment_intent_id, payment_method_id, merchant_reference,
+             provider_reference, idempotency_key, amount, currency, status,
+             customer_reference
+           ) VALUES ($1,$2,$3,$4,$5,$6,'ETB','pending',$4)
+           RETURNING id`,
+          [
+            paymentIntentId,
+            methods[0].id,
+            merchantRef,
+            telebirrTxnId,
+            randomBytes(16).toString('hex'),
+            grandTotal,
+          ],
+        );
+        await client.query(
+          `INSERT INTO payments.payment_verification_logs
+             (transaction_id, order_id, action, notes, actor_user_id)
+           VALUES ($1,$2,'submitted',$3,NULL)`,
+          [
+            txs[0].id,
+            orderId,
+            `Customer submitted Telebirr TXN ${telebirrTxnId}`,
+          ],
+        );
+      }
       const trackingUrl = `${this.webBase()}/orders/track?orderNumber=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(trackToken)}`;
       const itemsSnapshot = priced.map((l) => ({
         name: `${l.product_name}${l.variant_name ? ` — ${l.variant_name}` : ''}`,
@@ -347,18 +569,42 @@ export class SalesService {
       ]);
 
       await client.query('COMMIT');
+
+      let whatsappDeepLink: string | null = null;
+      if (preferredChannel === 'whatsapp' && !requiresManualContact) {
+        const waText = this.notify.buildOrderWhatsAppMessage({
+          eventType: 'order.placed',
+          orderNumber,
+          trackingUrl,
+          recipientName: dto.recipientName,
+          grandTotal,
+        });
+        whatsappDeepLink = this.whatsapp.buildWaMeLink(
+          dto.recipientPhone,
+          waText,
+        );
+      }
+
       return {
         orderId,
         orderNumber,
         status: 'pending_payment',
-        paymentStatus: 'unpaid',
+        paymentStatus:
+          paymentMethodCode === 'telebirr_manual'
+            ? 'pending_verification'
+            : 'unpaid',
         currency: 'ETB',
         subtotal,
         deliveryFee,
+        deliveryDistanceKm,
+        deliveryFeeRate,
+        deliveryRouteSource,
         grandTotal,
         paymentIntentId,
         paymentMethodCode,
         paymentMethodDisplayName,
+        telebirrTxnId,
+        whatsappDeepLink,
         preferredContactChannel: preferredChannel,
         requiresManualContact,
         recipientName: dto.recipientName,
@@ -366,6 +612,19 @@ export class SalesService {
         addressText: dto.addressText,
         fulfillmentType,
         estimatedDeliveryAt: null as string | null,
+        deliveryLocation: {
+          lng: dto.lng,
+          lat: dto.lat,
+          landmarkName: dto.landmarkName ?? null,
+          landmarkPlaceId: dto.landmarkPlaceId ?? null,
+          landmarkLng: dto.landmarkLng ?? null,
+          landmarkLat: dto.landmarkLat ?? null,
+          formattedAddress,
+          deliveryInstructions,
+          locationType,
+          locationSource,
+          googleMapsUrl: googleMapsNavUrl(dto.lat, dto.lng),
+        },
         trackingUrl,
         trackToken,
         items: itemsSnapshot,
@@ -414,12 +673,20 @@ export class SalesService {
       requires_manual_contact: boolean;
       estimated_delivery_at: Date | null;
       placed_at: Date | null;
+      delivery_service_type: string | null;
+      delivery_eta_minutes: number | null;
+      delivery_eta_window_text: string | null;
+      delivery_eta_disclaimer: string | null;
+      delivery_distance_km: string | null;
     }>(
       `SELECT id, order_number, status, payment_status, fulfillment_type,
               subtotal::text, delivery_fee::text, grand_total::text,
               ship_recipient_name, ship_recipient_phone, ship_address_text,
               preferred_contact_channel, requires_manual_contact,
-              estimated_delivery_at, placed_at
+              estimated_delivery_at, placed_at,
+              delivery_service_type, delivery_eta_minutes,
+              delivery_eta_window_text, delivery_eta_disclaimer,
+              delivery_distance_km::text
        FROM sales.orders
        WHERE order_number = $1 AND guest_track_token_hash = $2`,
       [orderNumber, sha256(token)],
@@ -442,8 +709,14 @@ export class SalesService {
       quantity: number;
       unit_price: string;
       line_total: string;
+      returns_allowed_snapshot: boolean | null;
+      return_window_days_snapshot: number | null;
+      return_policy_label_snapshot: string | null;
+      return_policy_description_snapshot: string | null;
     }>(
-      `SELECT name_snapshot, quantity, unit_price::text, line_total::text
+      `SELECT name_snapshot, quantity, unit_price::text, line_total::text,
+              returns_allowed_snapshot, return_window_days_snapshot,
+              return_policy_label_snapshot, return_policy_description_snapshot
        FROM sales.order_items WHERE order_id = $1 ORDER BY line_no`,
       [order.id],
     );
@@ -482,6 +755,17 @@ export class SalesService {
       preferredContactChannel: order.preferred_contact_channel,
       requiresManualContact: order.requires_manual_contact,
       estimatedDeliveryAt: order.estimated_delivery_at,
+      deliveryServiceType: order.delivery_service_type,
+      deliveryEtaMinutes: order.delivery_eta_minutes,
+      deliveryEtaWindowText: order.delivery_eta_window_text,
+      deliveryEtaDisclaimer:
+        order.delivery_eta_disclaimer ??
+        'Estimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays.',
+      deliveryDistanceKm:
+        order.delivery_distance_km != null
+          ? Number(order.delivery_distance_km)
+          : null,
+      etaIsEstimate: true,
       paymentMethodCode: pay[0]?.code ?? null,
       paymentMethodDisplayName: pay[0]?.display_name ?? null,
       placedAt: order.placed_at,
@@ -491,6 +775,14 @@ export class SalesService {
         quantity: i.quantity,
         unitPrice: Number(i.unit_price),
         lineTotal: Number(i.line_total),
+        returnsAllowed: i.returns_allowed_snapshot,
+        returnWindowDays: i.return_window_days_snapshot,
+        returnPolicyLabel:
+          i.return_policy_label_snapshot ??
+          (i.returns_allowed_snapshot === false
+            ? 'No Returns Available for This Item.'
+            : null),
+        returnPolicyDescription: i.return_policy_description_snapshot,
       })),
     };
   }
@@ -549,6 +841,9 @@ export class SalesService {
   async adminListOrders(opts?: {
     status?: string;
     paymentStatus?: string;
+    approvalStatus?: string;
+    qaStatus?: string;
+    contactStatus?: string;
     q?: string;
     requiresManualContact?: boolean;
     limit?: number;
@@ -564,6 +859,18 @@ export class SalesService {
     if (opts?.paymentStatus) {
       params.push(opts.paymentStatus);
       where.push(`o.payment_status = $${params.length}`);
+    }
+    if (opts?.approvalStatus) {
+      params.push(opts.approvalStatus);
+      where.push(`o.approval_status = $${params.length}`);
+    }
+    if (opts?.qaStatus) {
+      params.push(opts.qaStatus);
+      where.push(`o.qa_status = $${params.length}`);
+    }
+    if (opts?.contactStatus) {
+      params.push(opts.contactStatus);
+      where.push(`o.contact_status = $${params.length}`);
     }
     if (opts?.requiresManualContact === true) {
       where.push(`o.requires_manual_contact = true`);
@@ -581,6 +888,9 @@ export class SalesService {
       order_number: string;
       status: string;
       payment_status: string;
+      approval_status: string;
+      qa_status: string;
+      contact_status: string;
       fulfillment_type: string;
       grand_total: string;
       currency: string;
@@ -596,7 +906,9 @@ export class SalesService {
       delivery_id: string | null;
       delivery_status: string | null;
     }>(
-      `SELECT o.id, o.order_number, o.status, o.payment_status, o.fulfillment_type,
+      `SELECT o.id, o.order_number, o.status, o.payment_status,
+              o.approval_status, o.qa_status, o.contact_status,
+              o.fulfillment_type,
               o.grand_total::text, o.currency,
               o.ship_recipient_name, o.ship_recipient_phone, o.ship_address_text,
               o.preferred_contact_channel, o.requires_manual_contact,
@@ -621,6 +933,9 @@ export class SalesService {
       orderNumber: o.order_number,
       status: o.status,
       paymentStatus: o.payment_status,
+      approvalStatus: o.approval_status,
+      qaStatus: o.qa_status,
+      contactStatus: o.contact_status,
       fulfillmentType: o.fulfillment_type,
       grandTotal: Number(o.grand_total),
       currency: o.currency,
@@ -644,6 +959,14 @@ export class SalesService {
       order_number: string;
       status: string;
       payment_status: string;
+      approval_status: string;
+      qa_status: string;
+      contact_status: string;
+      approval_notes: string | null;
+      qa_notes: string | null;
+      approved_at: Date | null;
+      qa_checked_at: Date | null;
+      contact_follow_up_at: Date | null;
       fulfillment_type: string;
       subtotal: string;
       delivery_fee: string;
@@ -661,13 +984,35 @@ export class SalesService {
       preferred_contact_channel: string | null;
       requires_manual_contact: boolean;
       estimated_delivery_at: Date | null;
+      landmark_name: string | null;
+      landmark_place_id: string | null;
+      landmark_lng: string | null;
+      landmark_lat: string | null;
+      formatted_address: string | null;
+      delivery_instructions: string | null;
+      location_type: string | null;
+      location_source: string | null;
+      location_confirmed_at: Date | null;
+      delivery_distance_km: string | null;
+      delivery_fee_rate: string | null;
+      delivery_route_source: string | null;
+      delivery_pricing_snapshot: Record<string, unknown> | null;
     }>(
       `SELECT o.id, o.order_number, o.status, o.payment_status, o.fulfillment_type,
+              o.approval_status, o.qa_status, o.contact_status,
+              o.approval_notes, o.qa_notes,
+              o.approved_at, o.qa_checked_at, o.contact_follow_up_at,
               o.subtotal::text, o.delivery_fee::text, o.grand_total::text, o.currency,
               o.ship_recipient_name, o.ship_recipient_phone, o.ship_address_text,
               o.customer_note, o.placed_at, o.guest_phone_e164,
               o.preferred_contact_channel, o.requires_manual_contact,
               o.estimated_delivery_at,
+              o.landmark_name, o.landmark_place_id,
+              o.landmark_lng::text, o.landmark_lat::text,
+              o.formatted_address, o.delivery_instructions,
+              o.location_type, o.location_source, o.location_confirmed_at,
+              o.delivery_distance_km::text, o.delivery_fee_rate::text,
+              o.delivery_route_source, o.delivery_pricing_snapshot,
               ST_X(o.ship_location::geometry)::text AS lng,
               ST_Y(o.ship_location::geometry)::text AS lat,
               c.is_guest
@@ -711,12 +1056,16 @@ export class SalesService {
       tx_id: string | null;
       tx_status: string | null;
       method_code: string | null;
+      provider_reference: string | null;
+      rejection_reason: string | null;
     }>(
       `SELECT pi.id AS intent_id, pi.status AS intent_status, pi.amount::text,
-              t.id AS tx_id, t.status AS tx_status, m.code AS method_code
+              t.id AS tx_id, t.status AS tx_status, m.code AS method_code,
+              t.provider_reference, t.rejection_reason
        FROM payments.payment_intents pi
        LEFT JOIN LATERAL (
-         SELECT id, status, payment_method_id FROM payments.payment_transactions
+         SELECT id, status, payment_method_id, provider_reference, rejection_reason
+         FROM payments.payment_transactions
          WHERE payment_intent_id = pi.id
          ORDER BY initiated_at DESC LIMIT 1
        ) t ON true
@@ -747,9 +1096,11 @@ export class SalesService {
       attempt_count: number;
       created_at: Date;
       sent_at: Date | null;
+      payload: Record<string, unknown> | null;
     }>(
       `SELECT id, event_code, channel, destination_masked, status,
-              message_preview, last_error, attempt_count, created_at, sent_at
+              message_preview, last_error, attempt_count, created_at, sent_at,
+              payload
        FROM notify.order_notification_logs
        WHERE order_id = $1
        ORDER BY created_at DESC
@@ -776,14 +1127,52 @@ export class SalesService {
       [orderId],
     );
 
+    const { rows: contactCases } = await this.db.query<{
+      id: string;
+      reason_code: string;
+      status: string;
+      priority: string;
+      title: string;
+      details: string | null;
+      follow_up_at: Date | null;
+      created_at: Date;
+      resolved_at: Date | null;
+    }>(
+      `SELECT id, reason_code, status, priority, title, details,
+              follow_up_at, created_at, resolved_at
+       FROM sales.customer_contact_cases
+       WHERE order_id = $1
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [orderId],
+    );
+
     return {
       id: order.id,
       orderNumber: order.order_number,
       status: order.status,
       paymentStatus: order.payment_status,
+      approvalStatus: order.approval_status,
+      qaStatus: order.qa_status,
+      contactStatus: order.contact_status,
+      approvalNotes: order.approval_notes,
+      qaNotes: order.qa_notes,
+      approvedAt: order.approved_at,
+      qaCheckedAt: order.qa_checked_at,
+      contactFollowUpAt: order.contact_follow_up_at,
       fulfillmentType: order.fulfillment_type,
       subtotal: Number(order.subtotal),
       deliveryFee: Number(order.delivery_fee),
+      deliveryDistanceKm:
+        order.delivery_distance_km != null
+          ? Number(order.delivery_distance_km)
+          : null,
+      deliveryFeeRate:
+        order.delivery_fee_rate != null
+          ? Number(order.delivery_fee_rate)
+          : null,
+      deliveryRouteSource: order.delivery_route_source,
+      deliveryPricingSnapshot: order.delivery_pricing_snapshot,
       grandTotal: Number(order.grand_total),
       currency: order.currency,
       shipping: {
@@ -792,6 +1181,21 @@ export class SalesService {
         address: order.ship_address_text,
         lng: order.lng != null ? Number(order.lng) : null,
         lat: order.lat != null ? Number(order.lat) : null,
+        landmarkName: order.landmark_name,
+        landmarkPlaceId: order.landmark_place_id,
+        landmarkLng:
+          order.landmark_lng != null ? Number(order.landmark_lng) : null,
+        landmarkLat:
+          order.landmark_lat != null ? Number(order.landmark_lat) : null,
+        formattedAddress: order.formatted_address,
+        deliveryInstructions: order.delivery_instructions,
+        locationType: order.location_type,
+        locationSource: order.location_source,
+        locationConfirmedAt: order.location_confirmed_at,
+        googleMapsUrl:
+          order.lat != null && order.lng != null
+            ? googleMapsNavUrl(Number(order.lat), Number(order.lng))
+            : null,
       },
       preferredContactChannel: order.preferred_contact_channel,
       requiresManualContact: order.requires_manual_contact,
@@ -821,6 +1225,8 @@ export class SalesService {
         transactionId: p.tx_id,
         transactionStatus: p.tx_status,
         methodCode: p.method_code,
+        providerReference: p.provider_reference,
+        rejectionReason: p.rejection_reason,
       })),
       deliveries: deliveries.map((d) => ({
         id: d.id,
@@ -838,6 +1244,10 @@ export class SalesService {
         attemptCount: n.attempt_count,
         createdAt: n.created_at,
         sentAt: n.sent_at,
+        whatsappDeepLink:
+          typeof n.payload?.whatsappDeepLink === 'string'
+            ? n.payload.whatsappDeepLink
+            : null,
       })),
       contactAttempts: contactAttempts.map((a) => ({
         id: a.id,
@@ -847,7 +1257,315 @@ export class SalesService {
         attemptedAt: a.attempted_at,
         attemptedByName: a.full_name,
       })),
+      contactCases: contactCases.map((c) => ({
+        id: c.id,
+        reasonCode: c.reason_code,
+        status: c.status,
+        priority: c.priority,
+        title: c.title,
+        details: c.details,
+        followUpAt: c.follow_up_at,
+        createdAt: c.created_at,
+        resolvedAt: c.resolved_at,
+      })),
     };
+  }
+
+  async adminApproveOrder(
+    user: AuthUser,
+    orderId: string,
+    notes?: string,
+  ) {
+    const { rows } = await this.db.query<{
+      id: string;
+      payment_status: string;
+      approval_status: string;
+      status: string;
+    }>(
+      `SELECT id, payment_status, approval_status, status
+       FROM sales.orders WHERE id = $1`,
+      [orderId],
+    );
+    const order = rows[0];
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.payment_status !== 'paid') {
+      throw new BadRequestException('Payment must be verified before approval');
+    }
+    if (order.approval_status === 'approved') {
+      return this.adminGetOrder(orderId);
+    }
+
+    await this.db.query(
+      `UPDATE sales.orders
+       SET approval_status = 'approved',
+           approved_by = $2,
+           approved_at = now(),
+           approval_notes = $3,
+           status = CASE
+             WHEN status IN ('confirmed', 'pending_payment') THEN 'processing'
+             ELSE status
+           END,
+           qa_status = CASE
+             WHEN qa_status = 'not_started' THEN 'pending'
+             ELSE qa_status
+           END,
+           updated_at = now()
+       WHERE id = $1`,
+      [orderId, user.id, notes ?? null],
+    );
+    await this.db.query(
+      `INSERT INTO sales.order_approvals
+         (order_id, action, from_status, to_status, notes, actor_id)
+       VALUES ($1, 'approved', $2, 'approved', $3, $4)`,
+      [orderId, order.approval_status, notes ?? null, user.id],
+    );
+    await this.db.query(
+      `INSERT INTO sales.order_status_history
+         (order_id, from_status, to_status, reason, changed_by)
+       VALUES ($1, $2, 'processing', $3, $4)`,
+      [
+        orderId,
+        order.status,
+        notes ?? 'Admin approved order',
+        user.id,
+      ],
+    );
+    await this.db.query(
+      `INSERT INTO notify.admin_alerts (alert_type, severity, title, body, order_id)
+       VALUES ('qa_ready', 'info', 'Order ready for QA',
+               'Approved — pending QA review', $1)`,
+      [orderId],
+    );
+    return this.adminGetOrder(orderId);
+  }
+
+  async adminRejectOrder(
+    user: AuthUser,
+    orderId: string,
+    notes?: string,
+  ) {
+    const { rows } = await this.db.query<{
+      id: string;
+      approval_status: string;
+      status: string;
+    }>(
+      `SELECT id, approval_status, status FROM sales.orders WHERE id = $1`,
+      [orderId],
+    );
+    const order = rows[0];
+    if (!order) throw new NotFoundException('Order not found');
+
+    await this.db.query(
+      `UPDATE sales.orders
+       SET approval_status = 'rejected',
+           approved_by = $2,
+           approved_at = now(),
+           approval_notes = $3,
+           updated_at = now()
+       WHERE id = $1`,
+      [orderId, user.id, notes ?? null],
+    );
+    await this.db.query(
+      `INSERT INTO sales.order_approvals
+         (order_id, action, from_status, to_status, notes, actor_id)
+       VALUES ($1, 'rejected', $2, 'rejected', $3, $4)`,
+      [orderId, order.approval_status, notes ?? null, user.id],
+    );
+    return this.adminGetOrder(orderId);
+  }
+
+  async adminQaReview(
+    user: AuthUser,
+    orderId: string,
+    body: {
+      result: 'passed' | 'failed';
+      notes?: string;
+      checkedQtyOk?: boolean;
+      variantsOk?: boolean;
+      packagingOk?: boolean;
+    },
+  ) {
+    const { rows } = await this.db.query<{
+      id: string;
+      payment_status: string;
+      approval_status: string;
+      qa_status: string;
+      status: string;
+    }>(
+      `SELECT id, payment_status, approval_status, qa_status, status
+       FROM sales.orders WHERE id = $1`,
+      [orderId],
+    );
+    const order = rows[0];
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.payment_status !== 'paid') {
+      throw new BadRequestException('Payment must be verified before QA');
+    }
+    if (order.approval_status !== 'approved') {
+      throw new BadRequestException('Order must be approved before QA');
+    }
+
+    const toStatus = body.result === 'passed' ? 'passed' : 'failed';
+    const nextOrderStatus =
+      body.result === 'passed' ? 'ready_for_dispatch' : 'processing';
+
+    await this.db.query(
+      `UPDATE sales.orders
+       SET qa_status = $2,
+           qa_checked_by = $3,
+           qa_checked_at = now(),
+           qa_notes = $4,
+           status = $5,
+           updated_at = now()
+       WHERE id = $1`,
+      [orderId, toStatus, user.id, body.notes ?? null, nextOrderStatus],
+    );
+    await this.db.query(
+      `INSERT INTO sales.order_qa_reviews
+         (order_id, result, from_status, to_status, notes,
+          checked_qty_ok, variants_ok, packaging_ok, actor_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        orderId,
+        body.result,
+        order.qa_status,
+        toStatus,
+        body.notes ?? null,
+        body.checkedQtyOk ?? null,
+        body.variantsOk ?? null,
+        body.packagingOk ?? null,
+        user.id,
+      ],
+    );
+    await this.db.query(
+      `INSERT INTO sales.order_status_history
+         (order_id, from_status, to_status, reason, changed_by)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [
+        orderId,
+        order.status,
+        nextOrderStatus,
+        body.notes ?? `QA ${body.result}`,
+        user.id,
+      ],
+    );
+
+    if (body.result === 'failed') {
+      await this.db.query(
+        `INSERT INTO notify.admin_alerts (alert_type, severity, title, body, order_id)
+         VALUES ('qa_failed', 'critical', 'QA failed',
+                 'Order failed QA and needs correction', $1)`,
+        [orderId],
+      );
+    }
+
+    return this.adminGetOrder(orderId);
+  }
+
+  async adminOpenContactCase(
+    user: AuthUser,
+    orderId: string,
+    body: {
+      reasonCode: string;
+      title?: string;
+      details?: string;
+      priority?: string;
+      followUpAt?: string;
+    },
+  ) {
+    const { rowCount } = await this.db.query(
+      `SELECT 1 FROM sales.orders WHERE id = $1`,
+      [orderId],
+    );
+    if (!rowCount) throw new NotFoundException('Order not found');
+
+    const reason = body.reasonCode || 'other';
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO sales.customer_contact_cases
+         (order_id, reason_code, status, priority, title, details,
+          follow_up_at, opened_by)
+       VALUES ($1,$2,'open',$3,$4,$5,$6,$7)
+       RETURNING id`,
+      [
+        orderId,
+        reason,
+        body.priority ?? 'normal',
+        body.title ?? 'Customer contact required',
+        body.details ?? null,
+        body.followUpAt ?? null,
+        user.id,
+      ],
+    );
+
+    await this.db.query(
+      `UPDATE sales.orders
+       SET contact_status = 'required',
+           requires_manual_contact = true,
+           contact_follow_up_at = coalesce($2::timestamptz, contact_follow_up_at),
+           updated_at = now()
+       WHERE id = $1`,
+      [orderId, body.followUpAt ?? null],
+    );
+
+    await this.db.query(
+      `INSERT INTO notify.admin_alerts (alert_type, severity, title, body, order_id)
+       VALUES ('contact_required', 'warning', 'Customer contact required',
+               $2, $1)`,
+      [orderId, body.title ?? 'Customer contact required'],
+    );
+
+    return { caseId: rows[0].id, ...(await this.adminGetOrder(orderId)) };
+  }
+
+  async adminResolveContactCase(
+    user: AuthUser,
+    orderId: string,
+    body: { caseId?: string; notes?: string; closeAll?: boolean },
+  ) {
+    if (body.caseId) {
+      await this.db.query(
+        `UPDATE sales.customer_contact_cases
+         SET status = 'resolved',
+             resolved_by = $2,
+             resolved_at = now(),
+             resolution_notes = $3,
+             updated_at = now()
+         WHERE id = $1 AND order_id = $4`,
+        [body.caseId, user.id, body.notes ?? null, orderId],
+      );
+    } else if (body.closeAll) {
+      await this.db.query(
+        `UPDATE sales.customer_contact_cases
+         SET status = 'resolved',
+             resolved_by = $2,
+             resolved_at = now(),
+             resolution_notes = $3,
+             updated_at = now()
+         WHERE order_id = $1 AND status IN ('open', 'in_progress')`,
+        [orderId, user.id, body.notes ?? null],
+      );
+    }
+
+    const { rows: open } = await this.db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM sales.customer_contact_cases
+       WHERE order_id = $1 AND status IN ('open', 'in_progress')`,
+      [orderId],
+    );
+
+    if (Number(open[0]?.n ?? 0) === 0) {
+      await this.db.query(
+        `UPDATE sales.orders
+         SET contact_status = 'resolved',
+             requires_manual_contact = false,
+             contact_resolved_at = now(),
+             contact_resolved_by = $2,
+             updated_at = now()
+         WHERE id = $1`,
+        [orderId, user.id],
+      );
+    }
+
+    return this.adminGetOrder(orderId);
   }
 
   async adminRecordContactAttempt(
@@ -901,7 +1619,32 @@ export class SalesService {
     if (body.clearManualFlag) {
       await this.db.query(
         `UPDATE sales.orders
-         SET requires_manual_contact = false, updated_at = now()
+         SET requires_manual_contact = false,
+             contact_status = 'resolved',
+             contact_resolved_at = now(),
+             contact_resolved_by = $2,
+             updated_at = now()
+         WHERE id = $1`,
+        [orderId, user.id],
+      );
+      await this.db.query(
+        `UPDATE sales.customer_contact_cases
+         SET status = 'resolved',
+             resolved_by = $2,
+             resolved_at = now(),
+             resolution_notes = coalesce(resolution_notes, 'Resolved via contact attempt'),
+             updated_at = now()
+         WHERE order_id = $1 AND status IN ('open', 'in_progress')`,
+        [orderId, user.id],
+      );
+    } else {
+      await this.db.query(
+        `UPDATE sales.orders
+         SET contact_status = CASE
+               WHEN contact_status IN ('none', 'resolved', 'closed') THEN 'in_progress'
+               ELSE contact_status
+             END,
+             updated_at = now()
          WHERE id = $1`,
         [orderId],
       );
@@ -1373,11 +2116,15 @@ export class SalesService {
       variant_name: string | null;
       bulk_purchasing_enabled: boolean;
       available: string | null;
+      returns_allowed: boolean;
+      return_window_days: number | null;
+      return_policy_description: string | null;
     }>(
       `SELECT ci.id AS item_id, ci.variant_id, ci.quantity, pv.sku,
               p.name AS product_name, p.slug AS product_slug, pv.variant_name,
               p.bulk_purchasing_enabled,
-              (sb.qty_on_hand - sb.qty_reserved)::text AS available
+              (sb.qty_on_hand - sb.qty_reserved)::text AS available,
+              p.returns_allowed, p.return_window_days, p.return_policy_description
        FROM sales.cart_items ci
        JOIN catalog.product_variants pv ON pv.id = ci.variant_id
        JOIN catalog.products p ON p.id = pv.product_id
@@ -1411,6 +2158,7 @@ export class SalesService {
       } catch {
         unitPrice = null;
       }
+      const returnsAllowed = r.returns_allowed !== false;
       items.push({
         id: r.item_id,
         variantId: r.variant_id,
@@ -1425,6 +2173,12 @@ export class SalesService {
         currency,
         available: r.available != null ? Number(r.available) : null,
         bulkEnabled: r.bulk_purchasing_enabled,
+        returnsAllowed,
+        returnWindowDays: returnsAllowed ? (r.return_window_days ?? 7) : null,
+        returnPolicyLabel: returnsAllowed
+          ? `Returns within ${r.return_window_days ?? 7} day(s)`
+          : 'No Returns Available for This Item.',
+        returnPolicyDescription: r.return_policy_description,
       });
     }
 
@@ -1474,4 +2228,8 @@ function autoConfirmMessage(orderNumber: string) {
 
 function manualConfirmMessage(orderNumber: string) {
   return `Thank you for shopping with Sabu Online Shopping!\n\nYour order #${orderNumber} has been received successfully.\n\nOur administration team will contact you using the phone number you provided once your order has been reviewed and processed.\n\nPlease keep your phone available for further updates.`;
+}
+
+function googleMapsNavUrl(lat: number, lng: number) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 }

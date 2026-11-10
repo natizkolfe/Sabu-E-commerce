@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
@@ -7,7 +12,7 @@ export class CatalogService {
 
   constructor(private readonly db: DatabaseService) {}
 
-  async listCategories() {
+  async listCategories(opts?: { tree?: boolean; includeInactive?: boolean }) {
     const { rows } = await this.db.query<{
       id: string;
       parent_id: string | null;
@@ -16,13 +21,25 @@ export class CatalogService {
       name_am: string | null;
       path: string;
       sort_order: number;
+      is_active: boolean;
+      is_featured: boolean;
+      featured_sort: number;
+      description: string | null;
+      image_storage_key: string | null;
+      icon_storage_key: string | null;
+      meta_title: string | null;
+      meta_description: string | null;
+      ai_studio_enabled: boolean;
     }>(
-      `SELECT id, parent_id, slug, name, name_am, path, sort_order
+      `SELECT id, parent_id, slug, name, name_am, path, sort_order,
+              is_active, is_featured, featured_sort, description,
+              image_storage_key, icon_storage_key, meta_title, meta_description,
+              ai_studio_enabled
        FROM catalog.categories
-       WHERE is_active = true
+       WHERE (${opts?.includeInactive ? 'true' : 'is_active = true'})
        ORDER BY sort_order, name`,
     );
-    return rows.map((r) => ({
+    const items = rows.map((r) => ({
       id: r.id,
       parentId: r.parent_id,
       slug: r.slug,
@@ -30,7 +47,38 @@ export class CatalogService {
       nameAm: r.name_am,
       path: r.path,
       sortOrder: r.sort_order,
+      isActive: r.is_active,
+      isFeatured: r.is_featured,
+      featuredSort: r.featured_sort,
+      description: r.description,
+      imageKey: r.image_storage_key,
+      iconKey: r.icon_storage_key,
+      metaTitle: r.meta_title,
+      metaDescription: r.meta_description,
+      aiStudioEnabled: r.ai_studio_enabled,
     }));
+    if (!opts?.tree) return items;
+
+    type Node = (typeof items)[number] & { children: Node[] };
+    const map = new Map<string, Node>();
+    for (const item of items) map.set(item.id, { ...item, children: [] });
+    const roots: Node[] = [];
+    for (const node of map.values()) {
+      if (node.parentId && map.has(node.parentId)) {
+        map.get(node.parentId)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    const sortNodes = (nodes: Node[]) => {
+      nodes.sort(
+        (a, b) =>
+          a.sortOrder - b.sortOrder || a.name.localeCompare(b.name),
+      );
+      for (const n of nodes) sortNodes(n.children);
+    };
+    sortNodes(roots);
+    return roots;
   }
 
   async listProducts(opts: {
@@ -38,28 +86,118 @@ export class CatalogService {
     q?: string;
     limit?: number;
     bulkOnly?: boolean;
+    minPrice?: number;
+    maxPrice?: number;
+    brand?: string;
+    attribute?: string;
+    inStock?: boolean;
+    onSale?: boolean;
+    newArrivals?: boolean;
+    retailOnly?: boolean;
+    wholesaleOnly?: boolean;
+    sort?: string;
   }) {
     const limit = Math.min(Math.max(opts.limit ?? 48, 1), 100);
     const params: unknown[] = [];
     const where = [`p.status = 'active'`, `p.deleted_at IS NULL`];
+    const having: string[] = [];
 
     if (opts.category) {
       params.push(opts.category);
-      where.push(
-        `(c.slug = $${params.length} OR c.path LIKE $${params.length} || '/%' OR c.path LIKE '%/' || $${params.length} || '/%')`,
-      );
+      // Match primary or secondary category assignment within the slug subtree
+      where.push(`EXISTS (
+        SELECT 1
+        FROM catalog.categories root
+        JOIN catalog.categories leaf ON (
+          leaf.id = root.id
+          OR leaf.path = root.path
+          OR leaf.path LIKE root.path || '/%'
+        )
+        WHERE root.slug = $${params.length}
+          AND (
+            p.category_id = leaf.id
+            OR EXISTS (
+              SELECT 1 FROM catalog.product_categories pc
+              WHERE pc.product_id = p.id AND pc.category_id = leaf.id
+            )
+          )
+      )`);
     }
     if (opts.q) {
       params.push(`%${opts.q}%`);
       where.push(
-        `(p.name ILIKE $${params.length} OR p.name_am ILIKE $${params.length} OR p.description ILIKE $${params.length})`,
+        `(p.name ILIKE $${params.length} OR p.name_am ILIKE $${params.length} OR p.description ILIKE $${params.length} OR b.name ILIKE $${params.length})`,
       );
     }
-    if (opts.bulkOnly) {
+    if (opts.bulkOnly || opts.wholesaleOnly) {
       where.push(`p.bulk_purchasing_enabled = true`);
     }
+    if (opts.retailOnly) {
+      where.push(`p.bulk_purchasing_enabled = false`);
+    }
+    if (opts.brand) {
+      params.push(opts.brand.toLowerCase());
+      where.push(`lower(b.name) = $${params.length}`);
+    }
+    if (opts.attribute) {
+      // attribute=size:M or color:blue (code:value)
+      const [attrCode, attrValue] = opts.attribute.split(':');
+      if (attrCode && attrValue) {
+        params.push(attrCode.toLowerCase(), attrValue.toLowerCase());
+        const aIdx = params.length - 1;
+        const vIdx = params.length;
+        where.push(`EXISTS (
+          SELECT 1 FROM catalog.product_variants pv2
+          JOIN catalog.variant_attribute_values vav ON vav.variant_id = pv2.id
+          JOIN catalog.attribute_values av ON av.id = vav.attribute_value_id
+          JOIN catalog.attributes a ON a.id = av.attribute_id
+          WHERE pv2.product_id = p.id AND pv2.deleted_at IS NULL AND pv2.is_active
+            AND lower(a.code) = $${aIdx} AND lower(av.code) = $${vIdx}
+        )`);
+      }
+    }
+    if (opts.inStock) {
+      where.push(`EXISTS (
+        SELECT 1 FROM catalog.product_variants pv3
+        JOIN inventory.stock_balances sb ON sb.variant_id = pv3.id
+        JOIN inventory.warehouses w ON w.id = sb.warehouse_id AND w.code = 'ADD-MAIN'
+        WHERE pv3.product_id = p.id AND pv3.deleted_at IS NULL AND pv3.is_active
+          AND sb.qty_on_hand - sb.qty_reserved > 0
+      )`);
+    }
+    if (opts.onSale) {
+      having.push(
+        `min(pli.compare_at_price) IS NOT NULL AND min(pli.compare_at_price) > min(pli.unit_price)`,
+      );
+    }
+    if (opts.newArrivals) {
+      where.push(`p.created_at >= now() - interval '60 days'`);
+    }
+    if (opts.minPrice != null && !Number.isNaN(opts.minPrice)) {
+      params.push(opts.minPrice);
+      having.push(`min(pli.unit_price) >= $${params.length}`);
+    }
+    if (opts.maxPrice != null && !Number.isNaN(opts.maxPrice)) {
+      params.push(opts.maxPrice);
+      having.push(`min(pli.unit_price) <= $${params.length}`);
+    }
+
+    const sort = opts.sort ?? 'newest';
+    let orderBy = 'p.created_at DESC NULLS LAST, p.name';
+    if (sort === 'price_asc') orderBy = 'min(pli.unit_price) ASC NULLS LAST, p.name';
+    else if (sort === 'price_desc')
+      orderBy = 'min(pli.unit_price) DESC NULLS LAST, p.name';
+    else if (sort === 'newest') orderBy = 'p.created_at DESC NULLS LAST, p.name';
+    else if (sort === 'popular' || sort === 'bestselling')
+      orderBy = `COALESCE((
+        SELECT sum(oi.quantity) FROM sales.order_items oi
+        JOIN catalog.product_variants pv4 ON pv4.id = oi.variant_id
+        WHERE pv4.product_id = p.id
+      ), 0) DESC, p.name`;
+    else if (sort === 'rating') orderBy = 'p.name';
 
     params.push(limit);
+    const havingSql = having.length ? `HAVING ${having.join(' AND ')}` : '';
     const { rows } = await this.db.query<{
       id: string;
       slug: string;
@@ -76,10 +214,12 @@ export class CatalogService {
       currency: string | null;
       image_key: string | null;
       variant_count: string;
+      in_stock: boolean;
+      created_at: Date;
     }>(
       `SELECT
          p.id, p.slug, p.name, p.name_am, p.description,
-         p.bulk_purchasing_enabled,
+         p.bulk_purchasing_enabled, p.created_at,
          c.slug AS category_slug, c.name AS category_name,
          b.name AS brand_name,
          min(pli.unit_price)::text AS from_price,
@@ -101,7 +241,14 @@ export class CatalogService {
            ORDER BY pi.is_primary DESC, pi.sort_order
            LIMIT 1
          ) AS image_key,
-         count(DISTINCT pv.id)::text AS variant_count
+         count(DISTINCT pv.id)::text AS variant_count,
+         EXISTS (
+           SELECT 1 FROM catalog.product_variants pv3
+           JOIN inventory.stock_balances sb ON sb.variant_id = pv3.id
+           JOIN inventory.warehouses w ON w.id = sb.warehouse_id AND w.code = 'ADD-MAIN'
+           WHERE pv3.product_id = p.id AND pv3.deleted_at IS NULL AND pv3.is_active
+             AND sb.qty_on_hand - sb.qty_reserved > 0
+         ) AS in_stock
        FROM catalog.products p
        JOIN catalog.categories c ON c.id = p.category_id
        LEFT JOIN catalog.brands b ON b.id = p.brand_id
@@ -117,7 +264,8 @@ export class CatalogService {
         AND pl.is_active
        WHERE ${where.join(' AND ')}
        GROUP BY p.id, c.slug, c.name, b.name, pl.currency
-       ORDER BY p.name
+       ${havingSql}
+       ORDER BY ${orderBy}
        LIMIT $${params.length}`,
       params,
     );
@@ -138,7 +286,128 @@ export class CatalogService {
         currency: r.currency ?? 'ETB',
         imageKey: r.image_key,
         variantCount: Number(r.variant_count),
+        inStock: r.in_stock,
+        createdAt: r.created_at,
       })),
+      sort,
+    };
+  }
+
+  async listFacets(opts?: { category?: string }) {
+    const params: unknown[] = [];
+    let productScope = `p.status = 'active' AND p.deleted_at IS NULL`;
+    if (opts?.category) {
+      params.push(opts.category);
+      productScope += ` AND EXISTS (
+        SELECT 1
+        FROM catalog.categories root
+        JOIN catalog.categories leaf ON (
+          leaf.id = root.id
+          OR leaf.path = root.path
+          OR leaf.path LIKE root.path || '/%'
+        )
+        WHERE root.slug = $${params.length}
+          AND (
+            p.category_id = leaf.id
+            OR EXISTS (
+              SELECT 1 FROM catalog.product_categories pc
+              WHERE pc.product_id = p.id AND pc.category_id = leaf.id
+            )
+          )
+      )`;
+    }
+
+    const { rows: brands } = await this.db.query<{
+      name: string;
+      count: string;
+    }>(
+      `SELECT b.name, count(p.id)::text AS count
+       FROM catalog.brands b
+       JOIN catalog.products p ON p.brand_id = b.id
+       WHERE ${productScope}
+       GROUP BY b.name
+       ORDER BY b.name`,
+      params,
+    );
+
+    // Prefer attributes assigned to the category tree; fall back to all filterable attrs
+    let attrScope = `a.is_filterable = true`;
+    if (opts?.category) {
+      attrScope += ` AND (
+        EXISTS (
+          SELECT 1
+          FROM catalog.categories root
+          JOIN catalog.categories leaf ON (
+            leaf.id = root.id OR leaf.path = root.path OR leaf.path LIKE root.path || '/%'
+          )
+          JOIN catalog.category_attribute_sets cas ON cas.category_id = leaf.id
+          WHERE root.slug = $1 AND cas.attribute_id = a.id
+        )
+        OR NOT EXISTS (
+          SELECT 1
+          FROM catalog.categories root
+          JOIN catalog.categories leaf ON (
+            leaf.id = root.id OR leaf.path = root.path OR leaf.path LIKE root.path || '/%'
+          )
+          JOIN catalog.category_attribute_sets cas ON cas.category_id = leaf.id
+          WHERE root.slug = $1
+        )
+      )`;
+    }
+
+    const { rows: attrs } = await this.db.query<{
+      attr_code: string;
+      attr_name: string;
+      data_type: string;
+      value_code: string;
+      value_label: string;
+      count: string;
+    }>(
+      `SELECT a.code AS attr_code, a.name AS attr_name, a.data_type,
+              av.code AS value_code, av.label AS value_label,
+              count(DISTINCT pv.product_id)::text AS count
+       FROM catalog.attributes a
+       JOIN catalog.attribute_values av ON av.attribute_id = a.id
+       JOIN catalog.variant_attribute_values vav ON vav.attribute_value_id = av.id
+       JOIN catalog.product_variants pv ON pv.id = vav.variant_id
+         AND pv.deleted_at IS NULL AND pv.is_active
+       JOIN catalog.products p ON p.id = pv.product_id
+       WHERE ${productScope}
+         AND ${attrScope}
+       GROUP BY a.code, a.name, a.data_type, av.code, av.label, a.sort_order, av.sort_order
+       ORDER BY a.sort_order, av.sort_order`,
+      params,
+    );
+    const byAttr = new Map<
+      string,
+      {
+        code: string;
+        name: string;
+        dataType: string;
+        values: Array<{ code: string; label: string; count: number }>;
+      }
+    >();
+    for (const r of attrs) {
+      let entry = byAttr.get(r.attr_code);
+      if (!entry) {
+        entry = {
+          code: r.attr_code,
+          name: r.attr_name,
+          dataType: r.data_type,
+          values: [],
+        };
+        byAttr.set(r.attr_code, entry);
+      }
+      entry.values.push({
+        code: r.value_code,
+        label: r.value_label,
+        count: Number(r.count),
+      });
+    }
+    return {
+      brands: brands.map((b) => ({ name: b.name, count: Number(b.count) })),
+      attributes: [...byAttr.values()],
+      category: opts?.category ?? null,
     };
   }
 
@@ -154,9 +423,16 @@ export class CatalogService {
       category_name: string;
       brand_name: string | null;
       bulk_purchasing_enabled: boolean;
+      returns_allowed: boolean;
+      return_window_days: number | null;
+      return_conditions: string | null;
+      return_instructions: string | null;
+      return_policy_description: string | null;
     }>(
       `SELECT p.id, p.slug, p.name, p.name_am, p.description, p.specifications,
               p.bulk_purchasing_enabled,
+              p.returns_allowed, p.return_window_days, p.return_conditions,
+              p.return_instructions, p.return_policy_description,
               c.slug AS category_slug, c.name AS category_name, b.name AS brand_name
        FROM catalog.products p
        JOIN catalog.categories c ON c.id = p.category_id
@@ -221,6 +497,20 @@ export class CatalogService {
       tiersByVariant.set(t.variant_id, list);
     }
 
+    const { rows: aiPreviews } = await this.db.query<{
+      id: string;
+      storage_key: string;
+      variant_id: string | null;
+    }>(
+      `SELECT id, storage_key, variant_id
+       FROM studio.generated_images
+       WHERE product_id = $1
+         AND published = true
+         AND review_status = 'approved'
+       ORDER BY created_at DESC`,
+      [product.id],
+    );
+
     return {
       id: product.id,
       slug: product.slug,
@@ -231,6 +521,22 @@ export class CatalogService {
       category: { slug: product.category_slug, name: product.category_name },
       brand: product.brand_name,
       bulkPurchasingEnabled: product.bulk_purchasing_enabled,
+      returnsAllowed: product.returns_allowed !== false,
+      returnWindowDays: product.return_window_days ?? 7,
+      returnConditions: product.return_conditions,
+      returnInstructions: product.return_instructions,
+      returnPolicyDescription: product.return_policy_description,
+      returnPolicyLabel:
+        product.returns_allowed === false
+          ? 'No Returns Available for This Item.'
+          : `Returns within ${product.return_window_days ?? 7} day(s)`,
+      aiPreviews: aiPreviews.map((img) => ({
+        id: img.id,
+        storageKey: img.storage_key,
+        variantId: img.variant_id,
+        isAiPreview: true as const,
+        previewUrl: `/studio/images/${img.id}/preview`,
+      })),
       variants: variants.map((v) => ({
         id: v.id,
         sku: v.sku,
@@ -258,7 +564,7 @@ export class CatalogService {
     if (opts.q) {
       params.push(`%${opts.q}%`);
       where.push(
-        `(p.name ILIKE $${params.length} OR p.slug ILIKE $${params.length} OR p.name_am ILIKE $${params.length})`,
+        `(p.name ILIKE $${params.length} OR p.slug ILIKE $${params.length} OR p.name_am ILIKE $${params.length} OR p.retail_number ILIKE $${params.length})`,
       );
     }
     if (opts.status) {
@@ -275,11 +581,13 @@ export class CatalogService {
       slug: string;
       name: string;
       status: string;
+      retail_number: string | null;
       bulk_purchasing_enabled: boolean;
       category_name: string;
       variant_count: string;
     }>(
-      `SELECT p.id, p.slug, p.name, p.status, p.bulk_purchasing_enabled,
+      `SELECT p.id, p.slug, p.name, p.status, p.retail_number,
+              p.bulk_purchasing_enabled,
               c.name AS category_name,
               count(pv.id)::text AS variant_count
        FROM catalog.products p
@@ -297,6 +605,7 @@ export class CatalogService {
       slug: r.slug,
       name: r.name,
       status: r.status,
+      retailNumber: r.retail_number,
       bulkPurchasingEnabled: r.bulk_purchasing_enabled,
       categoryName: r.category_name,
       variantCount: Number(r.variant_count),
@@ -311,12 +620,23 @@ export class CatalogService {
       name_am: string | null;
       description: string | null;
       status: string;
+      retail_number: string | null;
       category_id: string;
       category_name: string;
       bulk_purchasing_enabled: boolean;
+      returns_allowed: boolean;
+      return_window_days: number | null;
+      return_conditions: string | null;
+      return_instructions: string | null;
+      return_policy_description: string | null;
+      return_policy_effective_at: Date | null;
     }>(
       `SELECT p.id, p.slug, p.name, p.name_am, p.description, p.status,
-              p.category_id, c.name AS category_name, p.bulk_purchasing_enabled
+              p.retail_number, p.category_id, c.name AS category_name,
+              p.bulk_purchasing_enabled,
+              p.returns_allowed, p.return_window_days, p.return_conditions,
+              p.return_instructions, p.return_policy_description,
+              p.return_policy_effective_at
        FROM catalog.products p
        JOIN catalog.categories c ON c.id = p.category_id
        WHERE p.id = $1 AND p.deleted_at IS NULL`,
@@ -393,9 +713,16 @@ export class CatalogService {
       nameAm: p.name_am,
       description: p.description,
       status: p.status,
+      retailNumber: p.retail_number,
       categoryId: p.category_id,
       categoryName: p.category_name,
       bulkPurchasingEnabled: p.bulk_purchasing_enabled,
+      returnsAllowed: p.returns_allowed ?? true,
+      returnWindowDays: p.return_window_days ?? 7,
+      returnConditions: p.return_conditions,
+      returnInstructions: p.return_instructions,
+      returnPolicyDescription: p.return_policy_description,
+      returnPolicyEffectiveAt: p.return_policy_effective_at,
       variants: variants.map((v) => {
         const priceTiers = tiersByVariant.get(v.id) ?? [];
         const retail = priceTiers.find(
@@ -421,6 +748,8 @@ export class CatalogService {
 
   async createProduct(input: {
     categoryId: string;
+    categoryIds?: string[];
+    brandId?: string | null;
     slug: string;
     name: string;
     nameAm?: string;
@@ -429,24 +758,42 @@ export class CatalogService {
     bulkPurchasingEnabled?: boolean;
     actorId?: string;
   }) {
-    const { rows } = await this.db.query<{ id: string }>(
-      `INSERT INTO catalog.products (
-         category_id, slug, name, name_am, description, status,
-         bulk_purchasing_enabled, created_by
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING id`,
-      [
-        input.categoryId,
-        input.slug,
-        input.name,
-        input.nameAm ?? null,
-        input.description ?? null,
-        input.status ?? 'draft',
-        input.bulkPurchasingEnabled ?? false,
-        input.actorId ?? null,
-      ],
-    );
-    return { id: rows[0].id };
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const retailNumber = await this.nextRetailNumber(client);
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO catalog.products (
+           category_id, brand_id, slug, name, name_am, description, status,
+           bulk_purchasing_enabled, created_by, retail_number
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING id`,
+        [
+          input.categoryId,
+          input.brandId ?? null,
+          input.slug,
+          input.name,
+          input.nameAm ?? null,
+          input.description ?? null,
+          input.status ?? 'draft',
+          input.bulkPurchasingEnabled ?? false,
+          input.actorId ?? null,
+          retailNumber,
+        ],
+      );
+      await client.query('COMMIT');
+      const productId = rows[0].id;
+      const categoryIds = input.categoryIds?.length
+        ? input.categoryIds
+        : [input.categoryId];
+      await this.setProductCategories(productId, categoryIds, input.categoryId);
+      return { id: productId, retailNumber };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async updateProduct(
@@ -456,16 +803,46 @@ export class CatalogService {
       nameAm?: string | null;
       description?: string | null;
       status?: string;
+      categoryId?: string;
+      categoryIds?: string[];
+      brandId?: string | null;
       bulkPurchasingEnabled?: boolean;
+      returnsAllowed?: boolean;
+      returnWindowDays?: number | null;
+      returnConditions?: string | null;
+      returnInstructions?: string | null;
+      returnPolicyDescription?: string | null;
+      returnPolicyEffectiveAt?: string | null;
     },
   ) {
+    if (input.categoryIds?.length || input.categoryId) {
+      const ids =
+        input.categoryIds?.length
+          ? input.categoryIds
+          : [input.categoryId!];
+      await this.setProductCategories(
+        productId,
+        ids,
+        input.categoryId ?? ids[0],
+      );
+    }
     const { rowCount } = await this.db.query(
       `UPDATE catalog.products SET
          name = COALESCE($2, name),
          name_am = COALESCE($3, name_am),
          description = COALESCE($4, description),
          status = COALESCE($5, status),
-         bulk_purchasing_enabled = COALESCE($6, bulk_purchasing_enabled),
+         brand_id = CASE WHEN $6::boolean THEN $7::uuid ELSE brand_id END,
+         bulk_purchasing_enabled = COALESCE($8, bulk_purchasing_enabled),
+         returns_allowed = COALESCE($9, returns_allowed),
+         return_window_days = CASE WHEN $10::boolean THEN $11 ELSE return_window_days END,
+         return_conditions = CASE WHEN $12::boolean THEN $13 ELSE return_conditions END,
+         return_instructions = CASE WHEN $14::boolean THEN $15 ELSE return_instructions END,
+         return_policy_description = CASE WHEN $16::boolean THEN $17 ELSE return_policy_description END,
+         return_policy_effective_at = CASE
+           WHEN $18::boolean THEN COALESCE($19::timestamptz, now())
+           ELSE return_policy_effective_at
+         END,
          updated_at = now()
        WHERE id = $1 AND deleted_at IS NULL`,
       [
@@ -474,7 +851,22 @@ export class CatalogService {
         input.nameAm ?? null,
         input.description ?? null,
         input.status ?? null,
+        input.brandId !== undefined,
+        input.brandId ?? null,
         input.bulkPurchasingEnabled ?? null,
+        input.returnsAllowed ?? null,
+        input.returnWindowDays !== undefined,
+        input.returnWindowDays ?? null,
+        input.returnConditions !== undefined,
+        input.returnConditions ?? null,
+        input.returnInstructions !== undefined,
+        input.returnInstructions ?? null,
+        input.returnPolicyDescription !== undefined,
+        input.returnPolicyDescription ?? null,
+        input.returnsAllowed !== undefined ||
+          input.returnWindowDays !== undefined ||
+          input.returnPolicyDescription !== undefined,
+        input.returnPolicyEffectiveAt ?? null,
       ],
     );
     if (!rowCount) throw new NotFoundException('Product not found');
@@ -483,10 +875,50 @@ export class CatalogService {
 
   async createVariant(input: {
     productId: string;
-    sku: string;
+    sku?: string;
     variantName?: string;
     options?: Record<string, unknown>;
   }) {
+    const { rows: products } = await this.db.query<{
+      id: string;
+      retail_number: string | null;
+    }>(
+      `SELECT id, retail_number FROM catalog.products
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [input.productId],
+    );
+    if (!products[0]) throw new NotFoundException('Product not found');
+
+    let retailNumber = products[0].retail_number;
+    if (!retailNumber) {
+      const client = await this.db.getPool().connect();
+      try {
+        await client.query('BEGIN');
+        retailNumber = await this.nextRetailNumber(client);
+        await client.query(
+          `UPDATE catalog.products SET retail_number = $2, updated_at = now()
+           WHERE id = $1`,
+          [input.productId, retailNumber],
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
+    const options = input.options ?? {};
+    const sku =
+      input.sku?.trim().toUpperCase() ||
+      (await this.buildVariantSku(
+        input.productId,
+        retailNumber,
+        input.variantName,
+        options,
+      ));
+
     const { rows } = await this.db.query<{ id: string }>(
       `INSERT INTO catalog.product_variants (
          product_id, sku, variant_name, options
@@ -494,12 +926,12 @@ export class CatalogService {
        RETURNING id`,
       [
         input.productId,
-        input.sku,
+        sku,
         input.variantName ?? null,
-        JSON.stringify(input.options ?? {}),
+        JSON.stringify(options),
       ],
     );
-    return { id: rows[0].id };
+    return { id: rows[0].id, sku, retailNumber };
   }
 
   async updateVariant(
@@ -533,11 +965,14 @@ export class CatalogService {
       code: string;
       name: string;
       name_am: string | null;
+      data_type: string;
+      unit: string | null;
+      is_filterable: boolean;
       value_id: string | null;
       value_code: string | null;
       value_label: string | null;
     }>(
-      `SELECT a.id, a.code, a.name, a.name_am,
+      `SELECT a.id, a.code, a.name, a.name_am, a.data_type, a.unit, a.is_filterable,
               v.id AS value_id, v.code AS value_code, v.label AS value_label
        FROM catalog.attributes a
        LEFT JOIN catalog.attribute_values v ON v.attribute_id = a.id
@@ -550,6 +985,9 @@ export class CatalogService {
         code: string;
         name: string;
         nameAm: string | null;
+        dataType: string;
+        unit: string | null;
+        isFilterable: boolean;
         values: Array<{ id: string; code: string; label: string }>;
       }
     >();
@@ -560,6 +998,9 @@ export class CatalogService {
           code: r.code,
           name: r.name,
           nameAm: r.name_am,
+          dataType: r.data_type,
+          unit: r.unit,
+          isFilterable: r.is_filterable,
           values: [],
         });
       }
@@ -609,6 +1050,359 @@ export class CatalogService {
       );
       await client.query('COMMIT');
       return { ok: true, options };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async adminListCategories() {
+    return this.listCategories({ tree: true, includeInactive: true });
+  }
+
+  private async computeCategoryPath(
+    slug: string,
+    parentId: string | null,
+  ): Promise<string> {
+    if (!parentId) return slug;
+    const { rows } = await this.db.query<{ path: string }>(
+      `SELECT path FROM catalog.categories WHERE id = $1`,
+      [parentId],
+    );
+    if (!rows[0]) throw new NotFoundException('Parent category not found');
+    return `${rows[0].path.replace(/^\/+/, '')}/${slug}`;
+  }
+
+  async createCategory(input: {
+    parentId?: string | null;
+    slug: string;
+    name: string;
+    nameAm?: string | null;
+    description?: string | null;
+    sortOrder?: number;
+    isActive?: boolean;
+    isFeatured?: boolean;
+    featuredSort?: number;
+    imageStorageKey?: string | null;
+    iconStorageKey?: string | null;
+    metaTitle?: string | null;
+    metaDescription?: string | null;
+    aiStudioEnabled?: boolean;
+  }) {
+    const path = await this.computeCategoryPath(
+      input.slug,
+      input.parentId ?? null,
+    );
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO catalog.categories (
+         parent_id, slug, name, name_am, path, sort_order, is_active,
+         description, is_featured, featured_sort, image_storage_key,
+         icon_storage_key, meta_title, meta_description, ai_studio_enabled
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,COALESCE($7,true),
+         $8,COALESCE($9,false),COALESCE($10,0),$11,$12,$13,$14,COALESCE($15,false)
+       ) RETURNING id`,
+      [
+        input.parentId ?? null,
+        input.slug,
+        input.name,
+        input.nameAm ?? null,
+        path,
+        input.sortOrder ?? 0,
+        input.isActive ?? true,
+        input.description ?? null,
+        input.isFeatured ?? false,
+        input.featuredSort ?? 0,
+        input.imageStorageKey ?? null,
+        input.iconStorageKey ?? null,
+        input.metaTitle ?? null,
+        input.metaDescription ?? null,
+        input.aiStudioEnabled ?? false,
+      ],
+    );
+    return { id: rows[0].id, path };
+  }
+
+  async updateCategory(
+    id: string,
+    input: {
+      parentId?: string | null;
+      slug?: string;
+      name?: string;
+      nameAm?: string | null;
+      description?: string | null;
+      sortOrder?: number;
+      isActive?: boolean;
+      isFeatured?: boolean;
+      featuredSort?: number;
+      imageStorageKey?: string | null;
+      iconStorageKey?: string | null;
+      metaTitle?: string | null;
+      metaDescription?: string | null;
+      aiStudioEnabled?: boolean;
+    },
+  ) {
+    const { rows: current } = await this.db.query<{
+      id: string;
+      parent_id: string | null;
+      slug: string;
+      path: string;
+    }>(`SELECT id, parent_id, slug, path FROM catalog.categories WHERE id = $1`, [
+      id,
+    ]);
+    if (!current[0]) throw new NotFoundException('Category not found');
+
+    const nextParent =
+      input.parentId !== undefined ? input.parentId : current[0].parent_id;
+    const nextSlug = input.slug ?? current[0].slug;
+    const nextPath = await this.computeCategoryPath(nextSlug, nextParent);
+    const oldPath = current[0].path.replace(/^\/+/, '');
+
+    await this.db.query(
+      `UPDATE catalog.categories SET
+         parent_id = $2,
+         slug = $3,
+         name = COALESCE($4, name),
+         name_am = COALESCE($5, name_am),
+         description = COALESCE($6, description),
+         path = $7,
+         sort_order = COALESCE($8, sort_order),
+         is_active = COALESCE($9, is_active),
+         is_featured = COALESCE($10, is_featured),
+         featured_sort = COALESCE($11, featured_sort),
+         image_storage_key = COALESCE($12, image_storage_key),
+         icon_storage_key = COALESCE($13, icon_storage_key),
+         meta_title = COALESCE($14, meta_title),
+         meta_description = COALESCE($15, meta_description),
+         ai_studio_enabled = COALESCE($16, ai_studio_enabled),
+         updated_at = now()
+       WHERE id = $1`,
+      [
+        id,
+        nextParent,
+        nextSlug,
+        input.name ?? null,
+        input.nameAm ?? null,
+        input.description ?? null,
+        nextPath,
+        input.sortOrder ?? null,
+        input.isActive ?? null,
+        input.isFeatured ?? null,
+        input.featuredSort ?? null,
+        input.imageStorageKey ?? null,
+        input.iconStorageKey ?? null,
+        input.metaTitle ?? null,
+        input.metaDescription ?? null,
+        input.aiStudioEnabled ?? null,
+      ],
+    );
+
+    // Re-path descendants when this node moves/renames
+    if (oldPath !== nextPath) {
+      await this.db.query(
+        `UPDATE catalog.categories
+         SET path = $2 || substr(path, length($1) + 1),
+             updated_at = now()
+         WHERE path = $1 OR path LIKE $1 || '/%'`,
+        [oldPath, nextPath],
+      );
+    }
+    return { ok: true, path: nextPath };
+  }
+
+  async setCategoryAttributeSets(
+    categoryId: string,
+    sets: Array<{ attributeId: string; isRequired?: boolean; sortOrder?: number }>,
+  ) {
+    const { rows } = await this.db.query<{ id: string }>(
+      `SELECT id FROM catalog.categories WHERE id = $1`,
+      [categoryId],
+    );
+    if (!rows[0]) throw new NotFoundException('Category not found');
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `DELETE FROM catalog.category_attribute_sets WHERE category_id = $1`,
+        [categoryId],
+      );
+      for (const [idx, s] of sets.entries()) {
+        await client.query(
+          `INSERT INTO catalog.category_attribute_sets
+             (category_id, attribute_id, is_required, sort_order)
+           VALUES ($1,$2,$3,$4)`,
+          [
+            categoryId,
+            s.attributeId,
+            s.isRequired ?? false,
+            s.sortOrder ?? idx * 10,
+          ],
+        );
+      }
+      await client.query('COMMIT');
+      return { ok: true, count: sets.length };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getCategoryAttributeSets(categoryId: string) {
+    const { rows } = await this.db.query<{
+      attribute_id: string;
+      code: string;
+      name: string;
+      data_type: string;
+      is_required: boolean;
+      sort_order: number;
+    }>(
+      `SELECT cas.attribute_id, a.code, a.name, a.data_type,
+              cas.is_required, cas.sort_order
+       FROM catalog.category_attribute_sets cas
+       JOIN catalog.attributes a ON a.id = cas.attribute_id
+       WHERE cas.category_id = $1
+       ORDER BY cas.sort_order, a.name`,
+      [categoryId],
+    );
+    return rows.map((r) => ({
+      attributeId: r.attribute_id,
+      code: r.code,
+      name: r.name,
+      dataType: r.data_type,
+      isRequired: r.is_required,
+      sortOrder: r.sort_order,
+    }));
+  }
+
+  private async nextRetailNumber(client: PoolClient) {
+    const period = String(new Date().getUTCFullYear());
+    await client.query(
+      `INSERT INTO core.document_sequences (doc_type, period, next_value)
+       VALUES ('RTL', $1, 1) ON CONFLICT (doc_type, period) DO NOTHING`,
+      [period],
+    );
+    const { rows } = await client.query<{ next_value: string }>(
+      `UPDATE core.document_sequences SET next_value = next_value + 1
+       WHERE doc_type = 'RTL' AND period = $1
+       RETURNING (next_value - 1)::text AS next_value`,
+      [period],
+    );
+    return `SABU-${period}-${String(Number(rows[0].next_value)).padStart(6, '0')}`;
+  }
+
+  private slugCode(value: string, max = 6) {
+    return (
+      value
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '')
+        // Drop O/I/L to reduce human misreads against 0/1.
+        .replace(new RegExp('[OIL]', 'g'), '')
+        .slice(0, max) || 'X'
+    );
+  }
+
+  private async buildVariantSku(
+    productId: string,
+    retailNumber: string,
+    variantName?: string,
+    options?: Record<string, unknown>,
+  ) {
+    const parts: string[] = [retailNumber];
+    const color =
+      (typeof options?.color === 'string' && options.color) ||
+      (typeof options?.Colour === 'string' && options.Colour) ||
+      null;
+    const size =
+      (typeof options?.size === 'string' && options.size) ||
+      (typeof options?.Size === 'string' && options.Size) ||
+      null;
+
+    if (color) parts.push(this.slugCode(color, 4));
+    if (size) parts.push(this.slugCode(String(size), 4));
+
+    if (!color && !size && variantName) {
+      // e.g. "28 / Navy" → NAVY + 28
+      const chunks = variantName
+        .split(/[\/|,·\-]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const chunk of chunks.slice(0, 2)) {
+        parts.push(this.slugCode(chunk, 4));
+      }
+    }
+
+    let base = parts.join('-');
+    if (parts.length === 1) {
+      const { rows: countRows } = await this.db.query<{ c: string }>(
+        `SELECT count(*)::text AS c FROM catalog.product_variants
+         WHERE product_id = $1 AND deleted_at IS NULL`,
+        [productId],
+      );
+      base = `${retailNumber}-V${Number(countRows[0]?.c ?? 0) + 1}`;
+    }
+
+    // Ensure uniqueness if collision
+    let candidate = base;
+    let n = 2;
+    for (;;) {
+      const { rows } = await this.db.query<{ id: string }>(
+        `SELECT id FROM catalog.product_variants
+         WHERE sku = $1 AND deleted_at IS NULL LIMIT 1`,
+        [candidate],
+      );
+      if (!rows[0]) return candidate;
+      candidate = `${base}-${n}`;
+      n += 1;
+      if (n > 50) {
+        throw new BadRequestException('Could not allocate unique variant SKU');
+      }
+    }
+  }
+
+  async setProductCategories(
+    productId: string,
+    categoryIds: string[],
+    primaryCategoryId?: string,
+  ) {
+    if (!categoryIds.length) {
+      throw new BadRequestException('At least one category is required');
+    }
+    const primary = primaryCategoryId ?? categoryIds[0];
+    if (!categoryIds.includes(primary)) {
+      categoryIds = [primary, ...categoryIds];
+    }
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT id FROM catalog.products WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [productId],
+      );
+      if (!rows[0]) throw new NotFoundException('Product not found');
+      await client.query(
+        `DELETE FROM catalog.product_categories WHERE product_id = $1`,
+        [productId],
+      );
+      for (const [idx, categoryId] of categoryIds.entries()) {
+        await client.query(
+          `INSERT INTO catalog.product_categories
+             (product_id, category_id, is_primary, sort_order)
+           VALUES ($1,$2,$3,$4)`,
+          [productId, categoryId, categoryId === primary, idx],
+        );
+      }
+      await client.query(
+        `UPDATE catalog.products
+         SET category_id = $2, updated_at = now()
+         WHERE id = $1`,
+        [productId, primary],
+      );
+      await client.query('COMMIT');
+      return { ok: true, primaryCategoryId: primary, categoryIds };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

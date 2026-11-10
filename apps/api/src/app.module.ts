@@ -11,6 +11,8 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { IamModule } from './modules/iam/iam.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { LogisticsModule } from './modules/logistics/logistics.module';
+import { MarketplaceModule } from './modules/marketplace/marketplace.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { NotifyModule } from './modules/notify/notify.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PricingModule } from './modules/pricing/pricing.module';
@@ -42,6 +44,8 @@ import { RootController } from './root.controller';
     FinanceModule,
     AuditModule,
     StudioModule,
+    MarketplaceModule,
+    AnalyticsModule,
   ],
   controllers: [RootController],
 })

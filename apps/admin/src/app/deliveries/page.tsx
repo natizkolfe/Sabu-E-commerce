@@ -1,35 +1,93 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { adminApi, ApiError } from "../../lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adminApi, ApiError, type DeliveryAdminDetail } from "../../lib/api";
 import { loadSession } from "../../lib/session";
 
 type QueueItem = Awaited<ReturnType<typeof adminApi.deliveryQueue>>[number];
 type Driver = Awaited<ReturnType<typeof adminApi.deliveryDrivers>>[number];
-type DeliveryDetail = Awaited<ReturnType<typeof adminApi.getDelivery>>;
+
+function splitCustomerName(fullName: string | null | undefined) {
+  const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: "—", lastName: "—" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "—" };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+}
+
+/** Short driver-facing paste: order #, name, item count, address, map. */
+function formatDeliverySummary(d: DeliveryAdminDetail): string {
+  const { firstName, lastName } = splitCustomerName(d.recipientName);
+  const itemCount = d.items.reduce((sum, i) => sum + (i.quantity || 0), 0);
+  return [
+    `Order Number: ${d.orderNumber}`,
+    `First Name: ${firstName}`,
+    `Last Name: ${lastName}`,
+    `Phone: ${d.recipientPhone || "—"}`,
+    `Number of Items: ${itemCount || d.packageCount || 0}`,
+    `Address: ${d.address || "—"}`,
+    `Google Maps: ${d.googleMapsUrl || "—"}`,
+    `Delivery Notes: ${d.deliveryInstructions?.trim() || "—"}`,
+  ].join("\n");
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 export default function DeliveriesAdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<DeliveryDetail | null>(null);
+  const [detail, setDetail] = useState<DeliveryAdminDetail | null>(null);
   const [driverId, setDriverId] = useState("");
-  const [offerLink, setOfferLink] = useState<string | null>(null);
-  const [whatsappPreview, setWhatsappPreview] = useState<string | null>(null);
+  const [portalUrl, setPortalUrl] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const autoOpenRef = useRef<string | null>(null);
+
+  const selectedDriver = useMemo(
+    () => drivers.find((d) => d.id === driverId) ?? null,
+    [drivers, driverId],
+  );
 
   const refresh = useCallback(async (accessToken: string) => {
+    // Include all active drivers so reassignment can pick someone currently on_delivery
     const [q, d] = await Promise.all([
       adminApi.deliveryQueue(accessToken),
-      adminApi.deliveryDrivers(accessToken),
+      adminApi.deliveryDrivers(accessToken, true),
     ]);
+    const active = d.filter((x) => x.status === "active");
     setQueue(q);
-    setDrivers(d);
-    setDriverId((prev) => prev || d[0]?.id || "");
+    setDrivers(active);
+    setDriverId((prev) => {
+      if (prev && active.some((x) => x.id === prev)) return prev;
+      const preferred =
+        active.find((x) => x.availability === "available") ?? active[0];
+      return preferred?.id || "";
+    });
   }, []);
 
   useEffect(() => {
@@ -47,8 +105,7 @@ export default function DeliveriesAdminPage() {
     if (!token) return;
     setBusy(true);
     setError(null);
-    setOfferLink(null);
-    setWhatsappPreview(null);
+    setPortalUrl(null);
     try {
       let id = deliveryId;
       if (!id) {
@@ -59,6 +116,9 @@ export default function DeliveriesAdminPage() {
       const d = await adminApi.getDelivery(token, id!);
       setDetail(d);
       setSelectedOrderId(orderId);
+      if (d.assignedDriver?.id) {
+        setDriverId(d.assignedDriver.id);
+      }
       await refresh(token);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed");
@@ -67,22 +127,54 @@ export default function DeliveriesAdminPage() {
     }
   }
 
-  async function sendOffer() {
+  // Deep-link from dashboard: /deliveries?orderId=...
+  useEffect(() => {
+    if (!token || busy) return;
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("orderId");
+    if (!orderId || autoOpenRef.current === orderId) return;
+    if (queue.length === 0) return;
+
+    const match = queue.find((o) => o.orderId === orderId);
+    autoOpenRef.current = orderId;
+    if (!match) {
+      setSelectedOrderId(orderId);
+      setError(
+        "That order is not ready for dispatch yet (needs paid + approved + QA passed).",
+      );
+      return;
+    }
+    setSelectedOrderId(match.orderId);
+    setMessage(`Opening ${match.orderNumber} for driver assignment…`);
+    ensureDelivery(match.orderId, match.deliveryId)
+      .then(() => {
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`dispatch-${match.orderId}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, queue, busy]);
+
+  async function assignDriver() {
     if (!token || !detail || !driverId) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await adminApi.offerDelivery(token, detail.id, driverId);
-      setOfferLink(res.offerLink);
-      setWhatsappPreview(res.whatsappPreview);
+      const res = await adminApi.assignDriver(token, detail.id, driverId);
+      setPortalUrl(res.dashboardUrl);
       setMessage(
-        `Offer sent (stub WhatsApp → ${res.driverPhone ?? "no phone"}). Expires ${new Date(res.expiresAt).toLocaleTimeString()}`,
+        res.reassigned
+          ? `Reassigned to ${res.driverName ?? "driver"}. Delivery status: assigned.`
+          : `Assigned to ${res.driverName ?? "driver"}. Delivery status: assigned.`,
       );
       const d = await adminApi.getDelivery(token, detail.id);
       setDetail(d);
       await refresh(token);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Offer failed");
+      setError(err instanceof ApiError ? err.message : "Assign failed");
     } finally {
       setBusy(false);
     }
@@ -98,6 +190,39 @@ export default function DeliveriesAdminPage() {
     }
   }
 
+  async function onCopyDetails() {
+    if (!detail) return;
+    const ok = await copyText(formatDeliverySummary(detail));
+    setMessage(ok ? "Delivery details copied to clipboard" : "Copy failed");
+  }
+
+  async function onCopyMaps() {
+    if (!detail?.googleMapsUrl) {
+      setError("No Google Maps link for this delivery");
+      return;
+    }
+    const ok = await copyText(detail.googleMapsUrl);
+    setMessage(ok ? "Google Maps link copied" : "Copy failed");
+  }
+
+  async function onCopyPhone() {
+    if (!detail?.recipientPhone) {
+      setError("No customer phone on this delivery");
+      return;
+    }
+    const ok = await copyText(detail.recipientPhone);
+    setMessage(ok ? "Customer phone copied" : "Copy failed");
+  }
+
+  async function onCopyPortal() {
+    if (!portalUrl) {
+      setError("Assign a driver first to generate the verification portal link");
+      return;
+    }
+    const ok = await copyText(portalUrl);
+    setMessage(ok ? "Driver verification portal link copied" : "Copy failed");
+  }
+
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
@@ -109,6 +234,13 @@ export default function DeliveriesAdminPage() {
     );
   }
 
+  const isAssigned = Boolean(
+    detail?.assignedDriver &&
+      ["accepted", "offered"].includes(
+        detail.assignedDriver.assignmentStatus ?? "",
+      ),
+  );
+
   return (
     <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6">
       <div className="mx-auto max-w-6xl">
@@ -119,8 +251,8 @@ export default function DeliveriesAdminPage() {
           <div>
             <h1 className="text-3xl tracking-tight">Delivery dispatch</h1>
             <p className="mt-1 text-sm text-[#9eb0a6]">
-              Paid orders → create delivery → offer to driver via WhatsApp link.
-              Auto-refreshes every 8s.
+              Call drivers on their registered phone, assign manually, then copy
+              delivery details to share. Auto-refreshes every 8s.
             </p>
           </div>
           <Link
@@ -137,33 +269,50 @@ export default function DeliveriesAdminPage() {
               Dispatch queue
             </div>
             <ul className="max-h-[70vh] divide-y divide-[#24302a] overflow-y-auto">
-              {queue.map((o) => (
-                <li key={o.orderId} className="px-3 py-3 text-sm">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{o.orderNumber}</p>
-                      <p className="text-xs text-[#8aa897]">
-                        {o.recipientName} · {o.address}
-                      </p>
-                      <p className="mt-1 text-xs text-[#b7c7be]">
-                        {o.itemCount} items · {o.orderStatus} /{" "}
-                        {o.deliveryStatus ?? "no delivery"}
-                        {o.distanceKm != null ? ` · ~km later` : ""}
-                      </p>
+              {queue.map((o) => {
+                const selected = selectedOrderId === o.orderId;
+                return (
+                  <li
+                    key={o.orderId}
+                    id={`dispatch-${o.orderId}`}
+                    className={`px-3 py-3 text-sm ${
+                      selected
+                        ? "bg-[#14201a] ring-1 ring-inset ring-[#2f6b4f]"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">
+                          {o.orderNumber}
+                          {selected && (
+                            <span className="ml-2 text-[10px] font-normal text-[#2f6b4f]">
+                              selected
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-[#8aa897]">
+                          {o.recipientName} · {o.address}
+                        </p>
+                        <p className="mt-1 text-xs text-[#b7c7be]">
+                          {o.itemCount} items · {o.orderStatus} /{" "}
+                          {o.deliveryStatus ?? "no delivery"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          ensureDelivery(o.orderId, o.deliveryId)
+                        }
+                        className="bg-[#2f6b4f] px-3 py-1.5 text-xs disabled:opacity-60"
+                      >
+                        {o.deliveryId ? "Open" : "Create delivery"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        ensureDelivery(o.orderId, o.deliveryId)
-                      }
-                      className="bg-[#2f6b4f] px-3 py-1.5 text-xs disabled:opacity-60"
-                    >
-                      {o.deliveryId ? "Open" : "Create delivery"}
-                    </button>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
               {queue.length === 0 && (
                 <li className="px-3 py-6 text-sm text-[#8aa897]">
                   No paid local-delivery orders waiting.
@@ -175,59 +324,156 @@ export default function DeliveriesAdminPage() {
           <section className="border border-[#24302a] p-4">
             {!detail ? (
               <p className="text-[#8aa897]">
-                Select an order to create or manage its delivery.
+                Select an order to review delivery details and assign a driver.
               </p>
             ) : (
-              <div className="space-y-4 text-sm">
+              <div className="space-y-5 text-sm">
                 <div>
-                  <h2 className="text-xl">{detail.deliveryNumber}</h2>
+                  <h2 className="text-xl">Delivery Details</h2>
                   <p className="text-xs text-[#8aa897]">
-                    Order {detail.orderNumber} · status {detail.status}
+                    {detail.deliveryNumber} · order {detail.orderNumber} ·{" "}
+                    {detail.status}
                   </p>
-                  <p className="mt-2 text-[#b7c7be]">
-                    {detail.recipientName} · {detail.recipientPhone}
+                </div>
+
+                <div className="space-y-1 border-t border-[#24302a] pt-3">
+                  <p className="text-xs text-[#8aa897]">Customer information</p>
+                  <p className="text-[#eef2ef]">{detail.recipientName}</p>
+                  <p className="text-[#b7c7be]">{detail.recipientPhone || "—"}</p>
+                  <p className="text-xs text-[#8aa897]">
+                    Preferred: {detail.preferredContactChannel ?? "—"}
+                  </p>
+                </div>
+
+                <div className="space-y-1 border-t border-[#24302a] pt-3">
+                  <p className="text-xs text-[#8aa897]">Delivery information</p>
+                  <p className="text-[#b7c7be]">
+                    Service:{" "}
+                    <span className="text-[#eef2ef]">
+                      {detail.serviceType ?? "Standard"}
+                    </span>
                   </p>
                   <p className="text-[#b7c7be]">{detail.address}</p>
-                  <p className="mt-1 text-xs text-[#8aa897]">
+                  <p className="text-xs text-[#8aa897]">
+                    Landmark: {detail.landmarkName || "—"}
+                  </p>
+                  {detail.deliveryInstructions && (
+                    <p className="text-xs text-amber-200/80">
+                      Instructions: {detail.deliveryInstructions}
+                    </p>
+                  )}
+                  <p className="text-xs text-[#8aa897]">
                     Pickup: {detail.warehouseName} ·{" "}
                     {detail.distanceKm != null
                       ? `${detail.distanceKm} km`
                       : "distance n/a"}{" "}
-                    · ETA {detail.etaMinutes ?? "—"} min ·{" "}
-                    {detail.packageCount} packages
+                    · ETA {detail.etaMinutes ?? "—"} min · {detail.packageCount}{" "}
+                    packages
                   </p>
+                  {detail.googleMapsUrl && (
+                    <a
+                      href={detail.googleMapsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block text-xs text-[#9dcdb4] underline"
+                    >
+                      Open Google Maps navigation
+                    </a>
+                  )}
                 </div>
 
-                <ul className="space-y-1 border-t border-[#24302a] pt-3 text-xs text-[#b7c7be]">
-                  {detail.items.map((i, idx) => (
-                    <li key={idx}>
-                      {i.name} × {i.quantity}
-                    </li>
-                  ))}
-                </ul>
+                <div className="border-t border-[#24302a] pt-3">
+                  <p className="text-xs text-[#8aa897]">Order items</p>
+                  <ul className="mt-1 space-y-1 text-xs text-[#b7c7be]">
+                    {detail.items.map((i, idx) => (
+                      <li key={idx}>
+                        {i.name} × {i.quantity}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
                 <div className="border-t border-[#24302a] pt-3">
-                  <p className="text-xs text-[#8aa897]">Available drivers</p>
+                  <p className="text-xs text-[#8aa897]">Copy and sharing</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onCopyDetails}
+                      className="bg-[#2f6b4f] px-3 py-2 text-xs"
+                    >
+                      Copy Delivery Details
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCopyMaps}
+                      className="border border-[#24302a] px-3 py-2 text-xs"
+                    >
+                      Copy Google Maps Link
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCopyPhone}
+                      className="border border-[#24302a] px-3 py-2 text-xs"
+                    >
+                      Copy Customer Phone Number
+                    </button>
+                    {portalUrl && (
+                      <button
+                        type="button"
+                        onClick={onCopyPortal}
+                        className="border border-[#24302a] px-3 py-2 text-xs"
+                      >
+                        Copy Driver Portal Link
+                      </button>
+                    )}
+                  </div>
+                  <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap bg-[#121916] p-3 text-[11px] leading-relaxed text-[#b7c7be]">
+                    {formatDeliverySummary(detail)}
+                  </pre>
+                </div>
+
+                <div className="border-t border-[#24302a] pt-3">
+                  <p className="text-xs text-[#8aa897]">Driver assignment</p>
+                  {detail.assignedDriver && (
+                    <p className="mt-1 text-xs text-[#b7c7be]">
+                      Current: {detail.assignedDriver.name} ·{" "}
+                      {detail.assignedDriver.phone || "no phone"} ·{" "}
+                      {detail.assignedDriver.assignmentStatus}
+                    </p>
+                  )}
                   <select
                     value={driverId}
                     onChange={(e) => setDriverId(e.target.value)}
                     className="mt-2 w-full bg-[#17201c] px-3 py-2 text-sm"
                   >
+                    {drivers.length === 0 && (
+                      <option value="">No available drivers</option>
+                    )}
                     {drivers.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.name} ({d.code}) · {d.availability} · load{" "}
+                        {d.name} · {d.phone || "no phone"} ·{" "}
+                        {d.zoneName || "no zone"} · {d.availability} · load{" "}
                         {d.activeDeliveries}
                       </option>
                     ))}
                   </select>
+                  {selectedDriver && (
+                    <p className="mt-2 text-xs text-[#eef2ef]">
+                      Contact driver at{" "}
+                      <span className="font-mono">
+                        {selectedDriver.phone || "—"}
+                      </span>{" "}
+                      (call from your phone — not in-app)
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
                       disabled={busy || !driverId}
-                      onClick={sendOffer}
+                      onClick={assignDriver}
                       className="bg-[#2f6b4f] px-4 py-2 text-sm disabled:opacity-60"
                     >
-                      Send WhatsApp offer
+                      {isAssigned ? "Reassign Driver" : "Assign Driver"}
                     </button>
                     <button
                       type="button"
@@ -239,38 +485,23 @@ export default function DeliveriesAdminPage() {
                   </div>
                 </div>
 
-                {detail.offers?.length > 0 && (
+                {(detail.assignments?.length ?? detail.offers?.length ?? 0) >
+                  0 && (
                   <div className="border-t border-[#24302a] pt-3">
-                    <p className="text-xs text-[#8aa897]">Offer history</p>
+                    <p className="text-xs text-[#8aa897]">Assignment history</p>
                     <ul className="mt-2 space-y-1 text-xs">
-                      {detail.offers.map((o) => (
+                      {(detail.assignments ?? detail.offers ?? []).map((o) => (
                         <li key={o.id} className="text-[#b7c7be]">
                           {o.driverName} · {o.status}
-                          {o.expiresAt
-                            ? ` · exp ${new Date(o.expiresAt).toLocaleTimeString()}`
+                          {"assignedByName" in o && o.assignedByName
+                            ? ` · by ${o.assignedByName}`
+                            : ""}
+                          {o.respondedAt
+                            ? ` · ${new Date(o.respondedAt).toLocaleString()}`
                             : ""}
                         </li>
                       ))}
                     </ul>
-                  </div>
-                )}
-
-                {offerLink && (
-                  <div className="border border-[#2f6b4f]/40 bg-[#14201a] p-3 text-xs">
-                    <p className="text-[#8aa897]">Secure driver link</p>
-                    <a
-                      href={offerLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 block break-all text-[#9dcdb4] underline"
-                    >
-                      {offerLink}
-                    </a>
-                    {whatsappPreview && (
-                      <pre className="mt-3 whitespace-pre-wrap text-[#b7c7be]">
-                        {whatsappPreview}
-                      </pre>
-                    )}
                   </div>
                 )}
               </div>
@@ -280,11 +511,6 @@ export default function DeliveriesAdminPage() {
               <p className="mt-4 text-sm text-[#2f6b4f]">{message}</p>
             )}
             {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
-            {selectedOrderId && (
-              <p className="mt-2 text-[10px] text-[#5f7368]">
-                Selected order {selectedOrderId}
-              </p>
-            )}
           </section>
         </div>
       </div>

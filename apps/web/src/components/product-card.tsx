@@ -38,7 +38,7 @@ export function ProductCard({
   return (
     <Link href={`/catalog/${slug}`} className="group block">
       <div
-        className={`relative aspect-[5/4] overflow-hidden bg-gradient-to-br ${tone}`}
+        className={`relative aspect-[3/4] overflow-hidden rounded-xl bg-gradient-to-br ${tone}`}
       >
         <div
           className="absolute inset-0 opacity-25 transition duration-500 group-hover:opacity-40"

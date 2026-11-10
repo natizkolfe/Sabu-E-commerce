@@ -261,7 +261,48 @@ export default function OrdersAdminPage() {
                   <p className="mt-2 text-[#b7c7be]">
                     {detail.shipping.name} · {detail.shipping.phone}
                   </p>
-                  <p className="text-[#b7c7be]">{detail.shipping.address}</p>
+                  <p className="text-[#b7c7be]">
+                    {detail.shipping.formattedAddress ?? detail.shipping.address}
+                  </p>
+                  {detail.shipping.landmarkName && (
+                    <p className="mt-1 text-xs text-[#9dcdb4]">
+                      Landmark: {detail.shipping.landmarkName}
+                      {detail.shipping.locationType
+                        ? ` (${detail.shipping.locationType})`
+                        : ""}
+                    </p>
+                  )}
+                  {detail.shipping.deliveryInstructions && (
+                    <p className="mt-1 text-xs text-[#b7c7be]">
+                      Directions: {detail.shipping.deliveryInstructions}
+                    </p>
+                  )}
+                  {detail.shipping.lat != null && detail.shipping.lng != null && (
+                    <p className="mt-1 text-[11px] text-[#8aa897]">
+                      Pin {detail.shipping.lat.toFixed(5)},{" "}
+                      {detail.shipping.lng.toFixed(5)}
+                      {detail.shipping.googleMapsUrl && (
+                        <>
+                          {" · "}
+                          <a
+                            href={detail.shipping.googleMapsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[#9dcdb4] underline"
+                          >
+                            Open in Google Maps
+                          </a>
+                        </>
+                      )}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-[#b7c7be]">
+                    Products {detail.subtotal} + Delivery {detail.deliveryFee}
+                    {detail.deliveryDistanceKm != null
+                      ? ` (${detail.deliveryDistanceKm} km × ${detail.deliveryFeeRate ?? "?"} ETB/km, ${detail.deliveryRouteSource ?? "—"})`
+                      : ""}{" "}
+                    = {detail.grandTotal} {detail.currency}
+                  </p>
                   <p className="mt-1 text-xs text-[#8aa897]">
                     Preferred: {detail.preferredContactChannel ?? "—"}
                   </p>
@@ -311,6 +352,19 @@ export default function OrdersAdminPage() {
                         {n.eventCode} · {n.channel} · {n.status} ·{" "}
                         {n.destinationMasked}
                         {n.lastError ? ` (${n.lastError})` : ""}
+                        {n.whatsappDeepLink ? (
+                          <>
+                            {" · "}
+                            <a
+                              href={n.whatsappDeepLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[#9dcdb4] underline"
+                            >
+                              Open WhatsApp
+                            </a>
+                          </>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -393,7 +447,7 @@ export default function OrdersAdminPage() {
                   </ul>
                   {detail.paymentStatus !== "paid" && (
                     <Link
-                      href="/payments"
+                      href={`/payments?orderId=${encodeURIComponent(detail.id)}`}
                       className="mt-2 inline-block text-xs text-[#9dcdb4] underline"
                     >
                       Open payment verification
@@ -415,7 +469,7 @@ export default function OrdersAdminPage() {
                   </ul>
                   {detail.paymentStatus === "paid" && (
                     <Link
-                      href="/deliveries"
+                      href={`/deliveries?orderId=${encodeURIComponent(detail.id)}`}
                       className="mt-2 inline-block text-xs text-[#9dcdb4] underline"
                     >
                       Open delivery dispatch

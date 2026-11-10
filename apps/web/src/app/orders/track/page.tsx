@@ -174,6 +174,22 @@ function TrackInner() {
         <p className="mt-1 text-lg text-sabu-ink">
           {formatEtb(data.grandTotal)} {data.currency}
         </p>
+        {(data.deliveryServiceType || data.deliveryEtaWindowText) && (
+          <div className="mt-3 space-y-1 text-sm text-sabu-moss">
+            {data.deliveryServiceType && (
+              <p className="capitalize">
+                Delivery service: {data.deliveryServiceType}
+              </p>
+            )}
+            {data.deliveryEtaWindowText && (
+              <p className="text-sabu-ink">{data.deliveryEtaWindowText}</p>
+            )}
+            <p className="text-xs">
+              {data.deliveryEtaDisclaimer ??
+                "Estimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays."}
+            </p>
+          </div>
+        )}
         {data.requiresManualContact && (
           <p className="mt-3 border border-sabu-mist/60 px-3 py-2 text-xs text-sabu-moss">
             You asked for phone updates. Our team will contact{" "}
@@ -189,14 +205,28 @@ function TrackInner() {
             <p className="mt-1 text-sm text-sabu-ink">
               Status: {delivery.status}
               {delivery.etaMinutes != null
-                ? ` · ETA ~${delivery.etaMinutes} min`
+                ? ` · estimated ~${delivery.etaMinutes} min`
                 : ""}
             </p>
+            <p className="mt-1 text-xs text-sabu-moss">
+              Estimated delivery time may vary depending on traffic conditions,
+              weather, driver availability, and other unexpected delays.
+            </p>
             {delivery.driverName && (
-              <p className="mt-2 text-sm text-sabu-moss">
-                Driver: {delivery.driverName}
-                {delivery.driverPhone ? ` · ${delivery.driverPhone}` : ""}
-              </p>
+              <div className="mt-2 space-y-2">
+                <p className="text-sm text-sabu-moss">
+                  Driver: {delivery.driverName}
+                  {delivery.driverPhone ? ` · ${delivery.driverPhone}` : ""}
+                </p>
+                {delivery.driverPhone && (
+                  <a
+                    href={`tel:${delivery.driverPhone}`}
+                    className="inline-block border border-sabu-leaf px-3 py-2 text-xs text-sabu-leaf"
+                  >
+                    Call driver
+                  </a>
+                )}
+              </div>
             )}
             {!delivery.verified && (delivery.pin || delivery.qrToken) && (
               <div className="mt-4 space-y-2">
@@ -232,12 +262,27 @@ function TrackInner() {
           {data.items.map((item, i) => (
             <li
               key={i}
-              className="flex justify-between py-3 text-sm text-sabu-moss"
+              className="flex justify-between gap-3 py-3 text-sm text-sabu-moss"
             >
               <span>
-                {item.name} × {item.quantity}
+                <span className="block text-sabu-ink">
+                  {item.name} × {item.quantity}
+                </span>
+                {item.returnPolicyLabel && (
+                  <span
+                    className={`mt-1 block text-xs ${
+                      item.returnsAllowed === false
+                        ? "text-amber-800"
+                        : "text-sabu-moss"
+                    }`}
+                  >
+                    {item.returnPolicyLabel}
+                  </span>
+                )}
               </span>
-              <span className="text-sabu-ink">{formatEtb(item.lineTotal)}</span>
+              <span className="shrink-0 text-sabu-ink">
+                {formatEtb(item.lineTotal)}
+              </span>
             </li>
           ))}
         </ul>

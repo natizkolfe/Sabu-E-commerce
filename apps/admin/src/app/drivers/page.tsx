@@ -119,7 +119,7 @@ export default function DriversAdminPage() {
             </Link>
             <h1 className="mt-2 text-3xl tracking-tight">Drivers</h1>
             <p className="mt-1 text-sm text-[#9eb0a6]">
-              Add drivers for WhatsApp assignment. They appear in Delivery
+              Add drivers for manual phone assignment. They appear in Delivery
               dispatch when available.
             </p>
           </div>

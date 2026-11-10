@@ -52,17 +52,67 @@ export class CheckoutDto {
   @MaxLength(500)
   addressText!: string;
 
+  /** Confirmed delivery destination longitude (WGS84). */
   @IsNumber()
   @Min(-180)
   lng!: number;
 
+  /** Confirmed delivery destination latitude (WGS84). */
   @IsNumber()
   @Min(-90)
   lat!: number;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  landmarkName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  landmarkPlaceId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  landmarkLng?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  landmarkLat?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  formattedAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  deliveryInstructions?: string;
+
+  @IsOptional()
+  @IsIn(['exact', 'landmark_nearby'])
+  locationType?: 'exact' | 'landmark_nearby';
+
+  @IsOptional()
+  @IsIn(['gps', 'search', 'manual_pin', 'admin', 'assisted'])
+  locationSource?: 'gps' | 'search' | 'manual_pin' | 'admin' | 'assisted';
+
+  /** Required for local_delivery: customer confirmed the pin/landmark. */
+  @IsOptional()
+  @IsBoolean()
+  locationConfirmed?: boolean;
+
+  @IsOptional()
   @IsIn(['local_delivery', 'store_pickup'])
   fulfillmentType?: 'local_delivery' | 'store_pickup' = 'local_delivery';
+
+  /** Standard (default) or Express when admin-enabled. */
+  @IsOptional()
+  @IsIn(['standard', 'express'])
+  deliveryServiceType?: 'standard' | 'express' = 'standard';
 
   @IsOptional()
   @IsIn(['RETAIL-ETB', 'WHOLESALE-ETB'])
@@ -71,7 +121,18 @@ export class CheckoutDto {
   @IsUUID()
   paymentMethodId!: string;
 
-  /** How the customer wants order updates (guest-safe). */
+  /** Telebirr transaction reference entered by customer after paying. */
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(40)
+  telebirrTxnId?: string;
+
+  /** Customer acknowledges the final payable amount before place order. */
+  @IsOptional()
+  @IsBoolean()
+  amountAcknowledged?: boolean;
+
   @IsIn([...CONTACT_CHANNELS])
   preferredContactChannel!: ContactChannel;
 

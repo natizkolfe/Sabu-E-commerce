@@ -192,6 +192,10 @@ function ConfirmationInner() {
               value={new Date(snapshot.estimatedDeliveryAt).toLocaleString()}
             />
           )}
+          <p className="text-xs text-sabu-moss">
+            Estimated delivery time may vary depending on traffic conditions,
+            weather, driver availability, and other unexpected delays.
+          </p>
           <Row
             label="Updates via"
             value={
@@ -199,6 +203,14 @@ function ConfirmationInner() {
                 ? `${snapshot.preferredContactChannel ?? "phone"} (admin will contact you)`
                 : (snapshot.preferredContactChannel ?? "—")
             }
+          />
+          <Row
+            label="Products"
+            value={formatEtb(snapshot.subtotal ?? 0)}
+          />
+          <Row
+            label="Delivery fee"
+            value={formatEtb(snapshot.deliveryFee ?? 0)}
           />
           <Row
             label="Total"
@@ -213,7 +225,18 @@ function ConfirmationInner() {
               className="flex justify-between gap-4 py-3 text-sm text-sabu-moss"
             >
               <span>
-                {item.name} × {item.quantity}
+                <span className="block text-sabu-ink">
+                  {item.name} × {item.quantity}
+                </span>
+                {"returnPolicyLabel" in item &&
+                  (item as { returnPolicyLabel?: string }).returnPolicyLabel && (
+                    <span className="mt-1 block text-xs">
+                      {
+                        (item as { returnPolicyLabel?: string })
+                          .returnPolicyLabel
+                      }
+                    </span>
+                  )}
               </span>
               <span className="text-sabu-ink">{formatEtb(item.lineTotal)}</span>
             </li>
@@ -234,6 +257,27 @@ function ConfirmationInner() {
               Scan to open your secure tracking page. Delivery handoff QR/PIN
               will appear here once a driver is assigned.
             </p>
+          </div>
+        )}
+
+        {snapshot.whatsappDeepLink && (
+          <div className="mt-8 space-y-2 border border-sabu-leaf/40 bg-sabu-leaf/5 p-4">
+            <p className="text-sm text-sabu-ink">
+              WhatsApp confirmation is ready for{" "}
+              {snapshot.recipientPhone ?? "your phone"}.
+            </p>
+            <p className="text-xs text-sabu-moss">
+              Until Meta WhatsApp Cloud API keys are configured, open this link
+              to send the confirmation message from WhatsApp.
+            </p>
+            <a
+              href={snapshot.whatsappDeepLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block bg-[#25D366] px-5 py-3 text-sm font-medium text-white"
+            >
+              Open WhatsApp confirmation
+            </a>
           </div>
         )}
 
@@ -264,7 +308,14 @@ function ConfirmationInner() {
         </div>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          {(intentId || snapshot.paymentIntentId) &&
+          {(method || snapshot.paymentMethodCode) === "telebirr_manual" ||
+          snapshot.paymentStatus === "pending_verification" ? (
+            <p className="w-full text-sm text-sabu-moss">
+              Telebirr payment is pending verification. You will receive updates
+              once Sabu confirms the transaction.
+            </p>
+          ) : (
+            (intentId || snapshot.paymentIntentId) &&
             snapshot.paymentStatus !== "paid" && (
               <Link
                 href={`/checkout/pay?orderId=${snapshot.orderId}&orderNumber=${encodeURIComponent(snapshot.orderNumber)}&intentId=${encodeURIComponent(intentId || snapshot.paymentIntentId || "")}&method=${encodeURIComponent(method || snapshot.paymentMethodCode || "")}&track=${encodeURIComponent(track || snapshot.trackToken || "")}`}
@@ -272,7 +323,8 @@ function ConfirmationInner() {
               >
                 Continue to payment
               </Link>
-            )}
+            )
+          )}
           {trackingUrl && (
             <Link
               href={`/orders/track?orderNumber=${encodeURIComponent(snapshot.orderNumber)}&token=${encodeURIComponent(track || snapshot.trackToken || "")}`}

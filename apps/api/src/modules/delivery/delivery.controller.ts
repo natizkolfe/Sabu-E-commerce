@@ -24,6 +24,11 @@ class OfferDto {
   driverId!: string;
 }
 
+class AssignDriverDto {
+  @IsUUID()
+  driverId!: string;
+}
+
 class DeclineDto {
   @IsOptional()
   @IsString()
@@ -53,6 +58,97 @@ class SettingsDto {
 
   @IsOptional()
   defaultSpeedKmh?: number;
+
+  @IsOptional()
+  @Min(0)
+  feePerKm?: number;
+
+  @IsOptional()
+  @Min(0)
+  minFee?: number;
+
+  @IsOptional()
+  @Min(0)
+  maxFee?: number | null;
+
+  @IsOptional()
+  @Min(0)
+  freeOverAmount?: number | null;
+
+  @IsOptional()
+  @Min(-180)
+  @Max(180)
+  originLng?: number;
+
+  @IsOptional()
+  @Min(-90)
+  @Max(90)
+  originLat?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  standardEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  expressEnabled?: boolean;
+
+  @IsOptional()
+  @Min(0)
+  standardBaseFare?: number;
+
+  @IsOptional()
+  @Min(0)
+  expressBaseFare?: number;
+
+  @IsOptional()
+  @Min(0)
+  expressFeePerKm?: number | null;
+
+  @IsOptional()
+  @Min(0)
+  expressSurcharge?: number;
+
+  @IsOptional()
+  @Min(0)
+  peakSurcharge?: number;
+
+  @IsOptional()
+  @Min(0)
+  holidaySurcharge?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  standardEtaBufferMinutes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expressEtaBufferMinutes?: number;
+
+  @IsOptional()
+  @Min(1)
+  expressSpeedKmh?: number | null;
+
+  @IsOptional()
+  @Min(0)
+  promoDiscountAmount?: number;
+
+  @IsOptional()
+  @Min(0)
+  @Max(100)
+  promoDiscountPercent?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  promoLabel?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  etaDisclaimer?: string;
 }
 
 class CreateDriverDto {
@@ -117,6 +213,32 @@ export class DeliveryController {
     };
   }
 
+  @Public()
+  @Get('landmarks')
+  landmarks(@Query('q') q?: string, @Query('city') city?: string) {
+    return this.deliveryService.listLandmarks({ q, city });
+  }
+
+  @Public()
+  @Get('quote')
+  quote(
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+    @Query('subtotal') subtotal?: string,
+    @Query('serviceType') serviceType?: 'standard' | 'express',
+  ) {
+    return this.deliveryService.quoteDelivery({
+      lat: lat != null && lat !== '' ? Number(lat) : undefined,
+      lng: lng != null && lng !== '' ? Number(lng) : undefined,
+      subtotal:
+        subtotal != null && subtotal !== '' ? Number(subtotal) : undefined,
+      serviceType:
+        serviceType === 'express' || serviceType === 'standard'
+          ? serviceType
+          : 'standard',
+    });
+  }
+
   // ——— Admin ———
   @Get('admin/queue')
   @RequirePermissions('delivery.dispatch')
@@ -172,6 +294,17 @@ export class DeliveryController {
     return this.deliveryService.createDeliveryFromOrder(user, orderId);
   }
 
+  @Post('admin/deliveries/:id/assign')
+  @RequirePermissions('delivery.dispatch')
+  assign(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AssignDriverDto,
+  ) {
+    return this.deliveryService.assignDriverDirectly(user, id, dto.driverId);
+  }
+
+  /** @deprecated Use POST .../assign — kept as alias for older admin clients */
   @Post('admin/deliveries/:id/offer')
   @RequirePermissions('delivery.dispatch')
   offer(
@@ -179,7 +312,7 @@ export class DeliveryController {
     @Param('id') id: string,
     @Body() dto: OfferDto,
   ) {
-    return this.deliveryService.offerToDriver(user, id, dto.driverId);
+    return this.deliveryService.assignDriverDirectly(user, id, dto.driverId);
   }
 
   @Post('admin/deliveries/:id/reissue-verification')
@@ -196,8 +329,8 @@ export class DeliveryController {
 
   @Put('admin/settings')
   @RequirePermissions('delivery.dispatch')
-  updateSettings(@Body() dto: SettingsDto) {
-    return this.deliveryService.updateSettings(dto);
+  updateSettings(@CurrentUser() user: AuthUser, @Body() dto: SettingsDto) {
+    return this.deliveryService.updateSettings({ ...dto, actorId: user.id });
   }
 
   // ——— Public driver portal (tokenized) ———

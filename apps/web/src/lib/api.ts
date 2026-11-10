@@ -80,6 +80,10 @@ export type CartView = {
     currency: string;
     available: number | null;
     bulkEnabled?: boolean;
+    returnsAllowed?: boolean;
+    returnWindowDays?: number | null;
+    returnPolicyLabel?: string | null;
+    returnPolicyDescription?: string | null;
   }>;
 };
 
@@ -118,6 +122,7 @@ export type CheckoutResult = {
     lineTotal: number;
   }>;
   confirmationMessage?: string;
+  whatsappDeepLink?: string | null;
   replayed: boolean;
 };
 
@@ -127,10 +132,22 @@ export type CheckoutBody = {
   addressText: string;
   lng: number;
   lat: number;
+  landmarkName?: string;
+  landmarkPlaceId?: string;
+  landmarkLng?: number;
+  landmarkLat?: number;
+  formattedAddress?: string;
+  deliveryInstructions?: string;
+  locationType?: "exact" | "landmark_nearby";
+  locationSource?: "gps" | "search" | "manual_pin" | "admin" | "assisted";
+  locationConfirmed?: boolean;
   paymentMethodId: string;
+  telebirrTxnId?: string;
+  amountAcknowledged?: boolean;
   preferredContactChannel: ContactChannel;
   contactConsent?: boolean;
   fulfillmentType?: "local_delivery" | "store_pickup";
+  deliveryServiceType?: "standard" | "express";
   priceListCode?: "RETAIL-ETB" | "WHOLESALE-ETB";
   customerNote?: string;
   idempotencyKey?: string;
@@ -180,7 +197,8 @@ export const api = {
     });
   },
 
-  listCategories() {
+  listCategories(opts?: { tree?: boolean }) {
+    const qs = opts?.tree ? "?tree=1" : "";
     return request<
       Array<{
         id: string;
@@ -189,15 +207,54 @@ export const api = {
         name: string;
         nameAm: string | null;
         path: string;
+        sortOrder?: number;
+        isFeatured?: boolean;
+        featuredSort?: number;
+        description?: string | null;
+        children?: Array<{
+          id: string;
+          parentId: string | null;
+          slug: string;
+          name: string;
+          nameAm: string | null;
+          path: string;
+          children?: unknown[];
+        }>;
       }>
-    >("/catalog/categories");
+    >(`/catalog/categories${qs}`);
   },
 
-  listProducts(params?: { category?: string; q?: string; bulk?: boolean }) {
+  listProducts(params?: {
+    category?: string;
+    q?: string;
+    bulk?: boolean;
+    minPrice?: number;
+    maxPrice?: number;
+    brand?: string;
+    attribute?: string;
+    inStock?: boolean;
+    onSale?: boolean;
+    newArrivals?: boolean;
+    retail?: boolean;
+    wholesale?: boolean;
+    sort?: string;
+    limit?: number;
+  }) {
     const qs = new URLSearchParams();
     if (params?.category) qs.set("category", params.category);
     if (params?.q) qs.set("q", params.q);
     if (params?.bulk) qs.set("bulk", "1");
+    if (params?.minPrice != null) qs.set("minPrice", String(params.minPrice));
+    if (params?.maxPrice != null) qs.set("maxPrice", String(params.maxPrice));
+    if (params?.brand) qs.set("brand", params.brand);
+    if (params?.attribute) qs.set("attribute", params.attribute);
+    if (params?.inStock) qs.set("inStock", "1");
+    if (params?.onSale) qs.set("onSale", "1");
+    if (params?.newArrivals) qs.set("newArrivals", "1");
+    if (params?.retail) qs.set("retail", "1");
+    if (params?.wholesale) qs.set("wholesale", "1");
+    if (params?.sort) qs.set("sort", params.sort);
+    if (params?.limit) qs.set("limit", String(params.limit));
     const suffix = qs.toString() ? `?${qs}` : "";
     return request<{
       items: Array<{
@@ -215,8 +272,82 @@ export const api = {
         currency: string;
         imageKey: string | null;
         variantCount: number;
+        inStock?: boolean;
       }>;
+      sort?: string;
     }>(`/catalog/products${suffix}`);
+  },
+
+  listFacets(params?: { category?: string }) {
+    const qs = new URLSearchParams();
+    if (params?.category) qs.set("category", params.category);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<{
+      brands: Array<{ name: string; count: number }>;
+      attributes: Array<{
+        code: string;
+        name: string;
+        dataType?: string;
+        values: Array<{ code: string; label: string; count: number }>;
+      }>;
+      category?: string | null;
+    }>(`/catalog/facets${suffix}`);
+  },
+
+  deliveryQuote(params: {
+    lat?: number;
+    lng?: number;
+    subtotal?: number;
+    serviceType?: "standard" | "express";
+  }) {
+    const qs = new URLSearchParams();
+    if (params.lat != null) qs.set("lat", String(params.lat));
+    if (params.lng != null) qs.set("lng", String(params.lng));
+    if (params.subtotal != null) qs.set("subtotal", String(params.subtotal));
+    if (params.serviceType) qs.set("serviceType", params.serviceType);
+    return request<{
+      pendingAdmin: boolean;
+      routeSource: string;
+      serviceType?: "standard" | "express";
+      distanceKm: number | null;
+      feePerKm: number;
+      baseFare?: number;
+      distanceCharge?: number;
+      serviceSurcharge?: number;
+      deliveryFee: number | null;
+      etaMinutes?: number | null;
+      etaWindowText?: string | null;
+      etaIsEstimate?: boolean;
+      etaDisclaimer?: string;
+      minApplied: boolean;
+      maxApplied: boolean;
+      freeApplied: boolean;
+      message?: string;
+      services?: Array<{
+        code: "standard" | "express";
+        name: string;
+        enabled: boolean;
+        available: boolean;
+        unavailableReason: string | null;
+      }>;
+      origin?: {
+        lng: number;
+        lat: number;
+        name: string;
+        address: string;
+      };
+    }>(`/delivery/quote?${qs}`);
+  },
+
+  telebirrSettings() {
+    return request<{
+      displayName: string;
+      merchantAccount: string;
+      instructions: string;
+      helpText: string | null;
+      txnFormatRegex: string;
+      isActive: boolean;
+    }>("/payments/telebirr/settings");
   },
 
   getProduct(slug: string) {
@@ -230,6 +361,19 @@ export const api = {
       category: { slug: string; name: string };
       brand: string | null;
       bulkPurchasingEnabled: boolean;
+      returnsAllowed?: boolean;
+      returnWindowDays?: number | null;
+      returnConditions?: string | null;
+      returnInstructions?: string | null;
+      returnPolicyDescription?: string | null;
+      returnPolicyLabel?: string | null;
+      aiPreviews?: Array<{
+        id: string;
+        storageKey: string;
+        variantId: string | null;
+        isAiPreview: true;
+        previewUrl: string;
+      }>;
       variants: Array<{
         id: string;
         sku: string;
@@ -347,6 +491,12 @@ export const api = {
       preferredContactChannel?: string | null;
       requiresManualContact?: boolean;
       estimatedDeliveryAt?: string | null;
+      deliveryServiceType?: string | null;
+      deliveryEtaMinutes?: number | null;
+      deliveryEtaWindowText?: string | null;
+      deliveryEtaDisclaimer?: string | null;
+      deliveryDistanceKm?: number | null;
+      etaIsEstimate?: boolean;
       paymentMethodCode?: string | null;
       paymentMethodDisplayName?: string | null;
       trackingUrl?: string | null;
@@ -356,6 +506,10 @@ export const api = {
         quantity: number;
         unitPrice?: number;
         lineTotal: number;
+        returnsAllowed?: boolean | null;
+        returnWindowDays?: number | null;
+        returnPolicyLabel?: string | null;
+        returnPolicyDescription?: string | null;
       }>;
       trackToken?: string;
     }>(`/sales/orders/track?${qs}`);

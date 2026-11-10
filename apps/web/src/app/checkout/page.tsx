@@ -7,8 +7,14 @@ import { api, ApiError, ContactChannel } from "../../lib/api";
 import { useAuth } from "../../context/auth-context";
 import { useCart } from "../../context/cart-context";
 import { formatEtb } from "../../lib/money";
+import {
+  DeliveryLocationPicker,
+  type DeliveryLocationValue,
+} from "../../components/DeliveryLocationPicker";
 
 type PayMethod = Awaited<ReturnType<typeof api.listPaymentMethods>>[number];
+type TelebirrSettings = Awaited<ReturnType<typeof api.telebirrSettings>>;
+type Quote = Awaited<ReturnType<typeof api.deliveryQuote>>;
 
 const CHANNELS: Array<{ value: ContactChannel; label: string; hint: string }> =
   [
@@ -42,20 +48,42 @@ const CHANNELS: Array<{ value: ContactChannel; label: string; hint: string }> =
 export default function CheckoutPage() {
   const router = useRouter();
   const { ready, user, accessToken } = useAuth();
-  const { cart, refresh, isGuest, guestToken } = useCart();
+  const { cart, refresh, isGuest, guestToken, updateItem, removeItem } =
+    useCart();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [recipientPhone, setRecipientPhone] = useState("+251");
-  const [addressText, setAddressText] = useState("Bole, Addis Ababa");
   const [note, setNote] = useState("");
   const [channel, setChannel] = useState<ContactChannel>("whatsapp");
   const [consent, setConsent] = useState(true);
+  const [location, setLocation] = useState<DeliveryLocationValue>({
+    lng: 38.789,
+    lat: 8.9806,
+    addressText: "Bole, Addis Ababa",
+    formattedAddress: "Bole, Addis Ababa",
+    landmarkName: null,
+    landmarkPlaceId: null,
+    landmarkLng: null,
+    landmarkLat: null,
+    deliveryInstructions: "",
+    locationType: "exact",
+    locationSource: "manual_pin",
+    confirmed: false,
+  });
   const [methods, setMethods] = useState<PayMethod[]>([]);
   const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [telebirr, setTelebirr] = useState<TelebirrSettings | null>(null);
+  const [txnId, setTxnId] = useState("");
+  const [amountAck, setAmountAck] = useState(false);
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [serviceType, setServiceType] = useState<"standard" | "express">(
+    "standard",
+  );
   const [useWholesale, setUseWholesale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cartBusy, setCartBusy] = useState(false);
 
   const canWholesale = useMemo(
     () => cart?.items.some((i) => i.bulkEnabled) ?? false,
@@ -66,6 +94,21 @@ export default function CheckoutPage() {
     [cart],
   );
 
+  const selectedMethod = methods.find((m) => m.id === paymentMethodId);
+  const isTelebirr = selectedMethod?.code === "telebirr_manual";
+
+  const txnValid = useMemo(() => {
+    if (!isTelebirr) return true;
+    const trimmed = txnId.trim();
+    if (!trimmed) return false;
+    const regex = telebirr?.txnFormatRegex ?? "^[A-Za-z0-9\\-]{6,40}$";
+    try {
+      return new RegExp(regex).test(trimmed);
+    } catch {
+      return /^[A-Za-z0-9-]{6,40}$/.test(trimmed);
+    }
+  }, [isTelebirr, txnId, telebirr]);
+
   useEffect(() => {
     if (qualifiesWholesale) setUseWholesale(true);
   }, [qualifiesWholesale]);
@@ -73,8 +116,10 @@ export default function CheckoutPage() {
   useEffect(() => {
     api.listPaymentMethods().then((m) => {
       setMethods(m);
-      setPaymentMethodId(m[0]?.id ?? "");
+      const tb = m.find((x) => x.code === "telebirr_manual");
+      setPaymentMethodId(tb?.id ?? m[0]?.id ?? "");
     });
+    api.telebirrSettings().then(setTelebirr).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -92,14 +137,99 @@ export default function CheckoutPage() {
     if (combined) setRecipientName(combined);
   }, [firstName, lastName]);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!paymentMethodId) {
-      setError("Select a payment method");
+  useEffect(() => {
+    if (!location.confirmed) {
+      setQuote(null);
       return;
     }
-    if (!firstName.trim() || !lastName.trim()) {
-      setError("First and last name are required");
+    let cancelled = false;
+    api
+      .deliveryQuote({
+        lat: location.lat,
+        lng: location.lng,
+        subtotal: cart?.subtotal ?? 0,
+        serviceType,
+      })
+      .then((q) => {
+        if (!cancelled) {
+          setQuote(q);
+          // If Express unavailable, fall back to Standard
+          if (
+            serviceType === "express" &&
+            q.services &&
+            !q.services.find((s) => s.code === "express")?.available
+          ) {
+            setServiceType("standard");
+          }
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setQuote(null);
+          if (serviceType === "express") {
+            setServiceType("standard");
+            setError(
+              err instanceof ApiError
+                ? err.message
+                : "Express delivery is unavailable",
+            );
+          }
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    location.confirmed,
+    location.lat,
+    location.lng,
+    cart?.subtotal,
+    serviceType,
+  ]);
+
+  function invalidatePaymentDraft() {
+    setTxnId("");
+    setAmountAck(false);
+  }
+
+  async function changeQty(itemId: string, quantity: number) {
+    setCartBusy(true);
+    setError(null);
+    try {
+      if (quantity < 1) await removeItem(itemId);
+      else await updateItem(itemId, quantity);
+      invalidatePaymentDraft();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update cart");
+    } finally {
+      setCartBusy(false);
+    }
+  }
+
+  const deliveryFee =
+    location.confirmed && quote && !quote.pendingAdmin && quote.deliveryFee != null
+      ? quote.deliveryFee
+      : null;
+  const grandTotal =
+    deliveryFee != null ? (cart?.subtotal ?? 0) + deliveryFee : null;
+
+  const canPlace =
+    !!cart?.items.length &&
+    !!firstName.trim() &&
+    !!lastName.trim() &&
+    !!recipientPhone &&
+    location.confirmed &&
+    deliveryFee != null &&
+    amountAck &&
+    !!paymentMethodId &&
+    txnValid &&
+    !busy &&
+    !cartBusy;
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!canPlace) {
+      setError("Complete all required fields before placing the order");
       return;
     }
     if (!consent && ["whatsapp", "telegram", "viber"].includes(channel)) {
@@ -112,13 +242,25 @@ export default function CheckoutPage() {
       const body = {
         recipientName,
         recipientPhone,
-        addressText,
-        lng: 38.789,
-        lat: 8.9806,
+        addressText: location.addressText || location.formattedAddress,
+        lng: location.lng,
+        lat: location.lat,
+        landmarkName: location.landmarkName ?? undefined,
+        landmarkPlaceId: location.landmarkPlaceId ?? undefined,
+        landmarkLng: location.landmarkLng ?? undefined,
+        landmarkLat: location.landmarkLat ?? undefined,
+        formattedAddress: location.formattedAddress,
+        deliveryInstructions: location.deliveryInstructions || undefined,
+        locationType: location.locationType,
+        locationSource: location.locationSource,
+        locationConfirmed: true,
         fulfillmentType: "local_delivery" as const,
+        deliveryServiceType: serviceType,
         customerNote: note || undefined,
         idempotencyKey: crypto.randomUUID(),
         paymentMethodId,
+        telebirrTxnId: isTelebirr ? txnId.trim() : undefined,
+        amountAcknowledged: true,
         preferredContactChannel: channel,
         contactConsent: consent,
         priceListCode: (useWholesale && canWholesale
@@ -178,9 +320,6 @@ export default function CheckoutPage() {
     );
   }
 
-  const deliveryFee = 150;
-  const grandTotal = (cart.subtotal ?? 0) + deliveryFee;
-
   return (
     <main className="min-h-screen bg-sabu-paper pt-28 pb-16">
       <div className="mx-auto grid max-w-6xl gap-10 px-6 lg:grid-cols-2">
@@ -234,18 +373,92 @@ export default function CheckoutPage() {
               className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
             />
           </label>
+          <DeliveryLocationPicker
+            value={location}
+            onChange={(next) => {
+              setLocation(next);
+              invalidatePaymentDraft();
+            }}
+          />
+
+          <fieldset className="space-y-3 border border-sabu-mist/60 p-4">
+            <legend className="px-1 text-sm text-sabu-moss">
+              Delivery service
+            </legend>
+            {(quote?.services ?? [
+              {
+                code: "standard" as const,
+                name: "Standard Delivery",
+                enabled: true,
+                available: true,
+                unavailableReason: null,
+              },
+              {
+                code: "express" as const,
+                name: "Express Delivery",
+                enabled: false,
+                available: false,
+                unavailableReason:
+                  "Express pricing has not been configured by the administrator",
+              },
+            ]).map((s) => (
+              <label
+                key={s.code}
+                className={`flex cursor-pointer items-start gap-3 border px-3 py-3 text-sm ${
+                  serviceType === s.code
+                    ? "border-sabu-leaf bg-sabu-leaf/5"
+                    : "border-sabu-mist/60"
+                } ${!s.available ? "opacity-60" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="deliveryService"
+                  disabled={!s.available}
+                  checked={serviceType === s.code}
+                  onChange={() => {
+                    setServiceType(s.code);
+                    invalidatePaymentDraft();
+                  }}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium text-sabu-ink">{s.name}</span>
+                  {s.code === "standard" && (
+                    <span className="mt-0.5 block text-xs text-sabu-moss">
+                      Default option · lower cost · estimated arrival
+                    </span>
+                  )}
+                  {s.code === "express" && (
+                    <span className="mt-0.5 block text-xs text-sabu-moss">
+                      Priority when available · estimated arrival only (not a
+                      guarantee)
+                    </span>
+                  )}
+                  {!s.available && s.unavailableReason && (
+                    <span className="mt-1 block text-xs text-amber-800">
+                      Unavailable: {s.unavailableReason}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+            {location.confirmed && quote && !quote.pendingAdmin && (
+              <div className="space-y-1 text-xs text-sabu-moss">
+                {quote.etaWindowText && (
+                  <p className="text-sabu-ink">
+                    Estimated delivery: {quote.etaWindowText}
+                  </p>
+                )}
+                <p>
+                  {quote.etaDisclaimer ??
+                    "Estimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays."}
+                </p>
+              </div>
+            )}
+          </fieldset>
+
           <label className="block text-sm text-sabu-moss">
-            Delivery address
-            <textarea
-              required
-              value={addressText}
-              onChange={(e) => setAddressText(e.target.value)}
-              rows={3}
-              className="mt-1 w-full border border-sabu-mist bg-transparent px-3 py-3 outline-none focus:border-sabu-leaf"
-            />
-          </label>
-          <label className="block text-sm text-sabu-moss">
-            Note (optional)
+            Order note (optional)
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -287,8 +500,6 @@ export default function CheckoutPage() {
                 />
                 <span>
                   I consent to receive transactional order updates on {channel}.
-                  You can still complete checkout without messaging apps by
-                  choosing Phone call.
                 </span>
               </label>
             )}
@@ -311,32 +522,88 @@ export default function CheckoutPage() {
             </label>
           )}
 
-          <fieldset className="space-y-2 pt-2">
-            <legend className="text-sm text-sabu-moss">Payment method</legend>
+          <section className="space-y-3 border border-sabu-mist/60 p-4">
+            <h2 className="font-[family-name:var(--font-syne)] text-xl text-sabu-ink">
+              Telebirr payment
+            </h2>
+            {telebirr && (
+              <div className="space-y-1 text-sm text-sabu-moss">
+                <p>
+                  Pay{" "}
+                  <span className="font-medium text-sabu-ink">
+                    {grandTotal != null ? formatEtb(grandTotal) : "—"}
+                  </span>{" "}
+                  to <span className="text-sabu-ink">{telebirr.displayName}</span>
+                </p>
+                <p>
+                  Merchant:{" "}
+                  <span className="font-medium text-sabu-ink">
+                    {telebirr.merchantAccount}
+                  </span>
+                </p>
+                <p>{telebirr.instructions}</p>
+                {telebirr.helpText && (
+                  <p className="text-xs">{telebirr.helpText}</p>
+                )}
+              </div>
+            )}
             {methods.map((m) => (
               <label
                 key={m.id}
-                className="flex cursor-pointer items-center gap-3 border border-sabu-mist/60 px-3 py-3 text-sm text-sabu-ink"
+                className="flex cursor-pointer items-center gap-3 text-sm text-sabu-ink"
               >
                 <input
                   type="radio"
                   name="pay"
                   checked={paymentMethodId === m.id}
-                  onChange={() => setPaymentMethodId(m.id)}
+                  onChange={() => {
+                    setPaymentMethodId(m.id);
+                    invalidatePaymentDraft();
+                  }}
                 />
-                <span>
-                  {m.displayName}
-                  <span className="ml-2 text-sabu-moss">({m.channel})</span>
-                </span>
+                <span>{m.displayName}</span>
               </label>
             ))}
-          </fieldset>
+            {isTelebirr && (
+              <label className="block text-sm text-sabu-moss">
+                Telebirr transaction ID
+                <input
+                  value={txnId}
+                  onChange={(e) => setTxnId(e.target.value)}
+                  placeholder="e.g. TB123456789"
+                  className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+                />
+                {txnId && !txnValid && (
+                  <span className="mt-1 block text-xs text-red-700">
+                    Enter a valid transaction reference
+                  </span>
+                )}
+              </label>
+            )}
+            <label className="flex items-start gap-2 text-sm text-sabu-moss">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={amountAck}
+                onChange={(e) => setAmountAck(e.target.checked)}
+                disabled={grandTotal == null}
+              />
+              <span>
+                I paid{" "}
+                <strong className="text-sabu-ink">
+                  {grandTotal != null ? formatEtb(grandTotal) : "—"}
+                </strong>{" "}
+                via Telebirr. Submitting a reference does not prove payment —
+                Sabu will verify before fulfillment.
+              </span>
+            </label>
+          </section>
 
           {error && <p className="text-sm text-red-700">{error}</p>}
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={!canPlace}
             className="mt-4 w-full bg-sabu-leaf px-5 py-3 text-sm text-sabu-cream hover:bg-sabu-forest disabled:opacity-60"
           >
             {busy ? "Placing order…" : "Place order"}
@@ -345,30 +612,123 @@ export default function CheckoutPage() {
 
         <aside className="border-t border-sabu-mist/50 pt-6 lg:border-t-0 lg:pt-0">
           <h2 className="font-[family-name:var(--font-syne)] text-2xl text-sabu-ink">
-            Summary
+            Your cart
           </h2>
-          <ul className="mt-4 space-y-3 text-sm">
+          <ul className="mt-4 space-y-4 text-sm">
             {cart.items.map((item) => (
-              <li key={item.id} className="flex justify-between gap-4 text-sabu-moss">
-                <span>
-                  {item.productName} × {item.quantity}
-                </span>
+              <li
+                key={item.id}
+                className="flex flex-wrap items-start justify-between gap-3 border-b border-sabu-mist/40 pb-3 text-sabu-moss"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sabu-ink">{item.productName}</p>
+                  <p className="text-xs">
+                    {formatEtb(item.unitPrice)} each
+                  </p>
+                  {"returnPolicyLabel" in item && item.returnPolicyLabel && (
+                    <p
+                      className={`mt-1 text-xs ${
+                        item.returnsAllowed === false
+                          ? "text-amber-800"
+                          : "text-sabu-moss"
+                      }`}
+                    >
+                      {item.returnPolicyLabel}
+                    </p>
+                  )}
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={cartBusy}
+                      onClick={() => changeQty(item.id, item.quantity - 1)}
+                      className="h-8 w-8 border border-sabu-mist text-sabu-ink"
+                      aria-label="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="w-8 text-center text-sabu-ink">
+                      {item.quantity}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={cartBusy}
+                      onClick={() => changeQty(item.id, item.quantity + 1)}
+                      className="h-8 w-8 border border-sabu-mist text-sabu-ink"
+                      aria-label="Increase quantity"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      disabled={cartBusy}
+                      onClick={() => changeQty(item.id, 0)}
+                      className="ml-2 text-xs text-red-700 underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
                 <span className="text-sabu-ink">{formatEtb(item.lineTotal)}</span>
               </li>
             ))}
           </ul>
           <div className="mt-6 space-y-2 border-t border-sabu-mist/50 pt-4 text-sm">
             <div className="flex justify-between text-sabu-moss">
-              <span>Subtotal</span>
+              <span>Products subtotal</span>
               <span>{formatEtb(cart.subtotal)}</span>
             </div>
-            <div className="flex justify-between text-sabu-moss">
-              <span>Delivery</span>
-              <span>{formatEtb(deliveryFee)}</span>
-            </div>
+            {location.confirmed && quote ? (
+              <>
+                <div className="flex justify-between text-sabu-moss">
+                  <span>Delivery service</span>
+                  <span className="capitalize">{serviceType}</span>
+                </div>
+                <div className="flex justify-between text-sabu-moss">
+                  <span>Delivery distance</span>
+                  <span>
+                    {quote.distanceKm != null
+                      ? `${quote.distanceKm} km`
+                      : "Pending"}
+                  </span>
+                </div>
+                {quote.baseFare != null && (
+                  <div className="flex justify-between text-sabu-moss">
+                    <span>Base fare</span>
+                    <span>{formatEtb(quote.baseFare)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sabu-moss">
+                  <span>Distance rate</span>
+                  <span>{quote.feePerKm} ETB/km</span>
+                </div>
+                <div className="flex justify-between text-sabu-moss">
+                  <span>Delivery fee</span>
+                  <span>
+                    {quote.pendingAdmin || quote.deliveryFee == null
+                      ? "Quote pending admin"
+                      : formatEtb(quote.deliveryFee)}
+                  </span>
+                </div>
+                {quote.etaWindowText && (
+                  <p className="text-xs text-sabu-ink">{quote.etaWindowText}</p>
+                )}
+                <p className="text-xs text-sabu-moss">
+                  {quote.etaDisclaimer ??
+                    "Estimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays."}
+                </p>
+                {quote.message && (
+                  <p className="text-xs text-sabu-moss">{quote.message}</p>
+                )}
+              </>
+            ) : (
+              <div className="flex justify-between text-sabu-moss">
+                <span>Delivery fee</span>
+                <span>Confirm location</span>
+              </div>
+            )}
             <div className="flex justify-between text-lg text-sabu-ink">
-              <span>Total</span>
-              <span>{formatEtb(grandTotal)}</span>
+              <span>Total payable</span>
+              <span>{grandTotal != null ? formatEtb(grandTotal) : "—"}</span>
             </div>
           </div>
         </aside>

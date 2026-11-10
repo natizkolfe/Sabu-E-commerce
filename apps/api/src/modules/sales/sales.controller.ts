@@ -138,6 +138,9 @@ export class SalesController {
   adminOrders(
     @Query('status') status?: string,
     @Query('paymentStatus') paymentStatus?: string,
+    @Query('approvalStatus') approvalStatus?: string,
+    @Query('qaStatus') qaStatus?: string,
+    @Query('contactStatus') contactStatus?: string,
     @Query('q') q?: string,
     @Query('requiresManualContact') requiresManualContact?: string,
     @Query('limit') limit?: string,
@@ -145,6 +148,9 @@ export class SalesController {
     return this.salesService.adminListOrders({
       status,
       paymentStatus,
+      approvalStatus,
+      qaStatus,
+      contactStatus,
       q,
       requiresManualContact:
         requiresManualContact === '1' || requiresManualContact === 'true'
@@ -173,6 +179,70 @@ export class SalesController {
       body.status,
       body.reason,
     );
+  }
+
+  @Post('admin/orders/:orderId/approve')
+  @RequirePermissions('orders.write')
+  adminApproveOrder(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body() body?: { notes?: string },
+  ) {
+    return this.salesService.adminApproveOrder(user, orderId, body?.notes);
+  }
+
+  @Post('admin/orders/:orderId/reject-approval')
+  @RequirePermissions('orders.write')
+  adminRejectOrder(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body() body?: { notes?: string },
+  ) {
+    return this.salesService.adminRejectOrder(user, orderId, body?.notes);
+  }
+
+  @Post('admin/orders/:orderId/qa')
+  @RequirePermissions('orders.write')
+  adminQa(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body()
+    body: {
+      result: 'passed' | 'failed';
+      notes?: string;
+      checkedQtyOk?: boolean;
+      variantsOk?: boolean;
+      packagingOk?: boolean;
+    },
+  ) {
+    return this.salesService.adminQaReview(user, orderId, body);
+  }
+
+  @Post('admin/orders/:orderId/contact-cases')
+  @RequirePermissions('orders.write')
+  adminOpenContactCase(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body()
+    body: {
+      reasonCode: string;
+      title?: string;
+      details?: string;
+      priority?: string;
+      followUpAt?: string;
+    },
+  ) {
+    return this.salesService.adminOpenContactCase(user, orderId, body);
+  }
+
+  @Post('admin/orders/:orderId/contact-cases/resolve')
+  @RequirePermissions('orders.write')
+  adminResolveContactCase(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body() body?: { caseId?: string; notes?: string; closeAll?: boolean },
+  ) {
+    return this.salesService.adminResolveContactCase(user, orderId, body ?? {});
   }
 
   @Post('admin/orders/:orderId/contact-attempts')

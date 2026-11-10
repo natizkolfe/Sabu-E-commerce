@@ -2,20 +2,36 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { adminApi, ApiError } from "../lib/api";
-import { clearSession, loadSession, saveSession, type AdminSession } from "../lib/session";
+import {
+  clearSession,
+  loadSession,
+  saveSession,
+  type AdminSession,
+} from "../lib/session";
 
 const nav = [
+  { href: "/analytics", label: "Dashboard & Analytics" },
   { href: "/orders", label: "Orders" },
   { href: "/products", label: "Products & prices" },
+  { href: "/categories", label: "Categories" },
+  { href: "/vendors", label: "Vendors" },
+  { href: "/commissions", label: "Commissions" },
+  { href: "/special-orders", label: "Special Orders" },
+  { href: "/partners", label: "Partners" },
   { href: "/drivers", label: "Drivers" },
   { href: "/deliveries", label: "Delivery dispatch" },
+  { href: "/delivery-settings", label: "Delivery pricing" },
   { href: "/payments", label: "Payment verification" },
   { href: "/studio", label: "AI Studio" },
 ];
 
 export default function AdminHome() {
+  const router = useRouter();
   const [session, setSession] = useState<AdminSession | null>(null);
+  const [ready, setReady] = useState(false);
+  const [showModules, setShowModules] = useState(false);
   const [phone, setPhone] = useState("+2519");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
@@ -23,8 +39,17 @@ export default function AdminHome() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSession(loadSession());
-  }, []);
+    const s = loadSession();
+    const modules =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("modules") === "1";
+    setSession(s);
+    setShowModules(modules);
+    setReady(true);
+    if (s && !modules) {
+      router.replace("/analytics");
+    }
+  }, [router]);
 
   async function requestOtp(e: FormEvent) {
     e.preventDefault();
@@ -50,9 +75,18 @@ export default function AdminHome() {
       };
       saveSession(next);
       setSession(next);
+      router.replace("/analytics");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Verify failed");
     }
+  }
+
+  if (!ready) {
+    return (
+      <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
+        <p className="text-sm text-[#8aa897]">Loading…</p>
+      </main>
+    );
   }
 
   if (!session) {
@@ -64,8 +98,7 @@ export default function AdminHome() {
           </p>
           <h1 className="mt-3 text-4xl tracking-tight">Sign in</h1>
           <p className="mt-2 text-sm text-[#9eb0a6]">
-            Staff OTP login. First admin sign-in promotes this phone to
-            Ethiopia operations admin (orders, drivers, dispatch, payments).
+            Staff OTP login. After sign-in you land on the analytics dashboard.
           </p>
           <p className="mt-3 text-xs text-[#8aa897]">
             © Lulie Tech LLC. All rights reserved.
@@ -106,6 +139,14 @@ export default function AdminHome() {
           )}
           {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
         </div>
+      </main>
+    );
+  }
+
+  if (!showModules) {
+    return (
+      <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
+        <p className="text-sm text-[#8aa897]">Opening analytics dashboard…</p>
       </main>
     );
   }

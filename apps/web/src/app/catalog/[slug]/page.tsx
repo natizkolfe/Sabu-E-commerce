@@ -8,7 +8,16 @@ import { formatEtb } from "../../../lib/money";
 import { useAuth } from "../../../context/auth-context";
 import { useCart } from "../../../context/cart-context";
 
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
+  "http://localhost:3001/v1";
+
 type Product = Awaited<ReturnType<typeof api.getProduct>>;
+
+function mediaUrl(path: string) {
+  if (path.startsWith("http")) return path;
+  return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
 
 function resolveUnitPrice(
   tiers: Array<{ listCode: string; minQty: number; unitPrice: number }>,
@@ -38,6 +47,7 @@ export default function ProductDetailPage() {
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [activePreview, setActivePreview] = useState(0);
 
   useEffect(() => {
     if (!slug) return;
@@ -47,9 +57,13 @@ export default function ProductDetailPage() {
         setProduct(p);
         setVariantId(p.variants[0]?.id ?? null);
         setQty(p.bulkPurchasingEnabled ? 10 : 1);
+        setActivePreview(0);
       })
       .catch((err: Error) => setError(err.message));
   }, [slug]);
+
+  const aiPreviews = product?.aiPreviews ?? [];
+  const currentPreview = aiPreviews[activePreview] ?? null;
 
   const selected = useMemo(
     () =>
@@ -118,19 +132,63 @@ export default function ProductDetailPage() {
   return (
     <main className="min-h-screen bg-sabu-paper pt-24 pb-12">
       <div className="mx-auto grid max-w-5xl gap-6 px-4 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-8">
-        <div className="aspect-[5/4] bg-gradient-to-br from-sabu-leaf to-sabu-ink lg:aspect-auto lg:min-h-[280px]">
-          <div className="flex h-full items-end p-5">
-            <div>
-              {product.bulkPurchasingEnabled && (
-                <span className="mb-2 inline-block bg-sabu-cream/95 px-2 py-0.5 text-[10px] font-medium tracking-wide text-sabu-ink uppercase">
-                  Bulk available
-                </span>
-              )}
-              <p className="font-[family-name:var(--font-syne)] text-2xl text-sabu-cream sm:text-3xl">
-                {product.name}
-              </p>
-            </div>
+        <div>
+          <div className="relative aspect-[3/4] overflow-hidden rounded-xl bg-gradient-to-br from-sabu-leaf to-sabu-ink lg:aspect-[4/5] lg:min-h-[360px]">
+            {currentPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={mediaUrl(currentPreview.previewUrl)}
+                alt={`${product.name} AI preview`}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full items-end p-5">
+                <div>
+                  {product.bulkPurchasingEnabled && (
+                    <span className="mb-2 inline-block bg-sabu-cream/95 px-2 py-0.5 text-[10px] font-medium tracking-wide text-sabu-ink uppercase">
+                      Bulk available
+                    </span>
+                  )}
+                  <p className="font-[family-name:var(--font-syne)] text-2xl text-sabu-cream sm:text-3xl">
+                    {product.name}
+                  </p>
+                </div>
+              </div>
+            )}
+            {currentPreview && (
+              <span className="absolute top-3 left-3 bg-sabu-cream/95 px-2 py-0.5 text-[10px] font-medium tracking-wide text-sabu-ink uppercase">
+                AI Preview
+              </span>
+            )}
           </div>
+          {aiPreviews.length > 1 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {aiPreviews.map((preview, idx) => (
+                <button
+                  key={preview.id}
+                  type="button"
+                  onClick={() => setActivePreview(idx)}
+                  className={`h-16 w-12 overflow-hidden rounded-md border ${
+                    idx === activePreview
+                      ? "border-sabu-leaf"
+                      : "border-sabu-mist"
+                  }`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={mediaUrl(preview.previewUrl)}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+          {aiPreviews.length > 0 && (
+            <p className="mt-2 text-[11px] text-sabu-moss">
+              Synthetic / licensed AI try-on preview for this product.
+            </p>
+          )}
         </div>
 
         <div>
@@ -156,6 +214,28 @@ export default function ProductDetailPage() {
           <p className="mt-3 text-sm leading-relaxed text-sabu-moss">
             {product.description}
           </p>
+
+          <div
+            className={`mt-4 border px-3 py-2 text-xs ${
+              product.returnsAllowed === false
+                ? "border-amber-700/40 text-amber-900"
+                : "border-sabu-mist/60 text-sabu-moss"
+            }`}
+          >
+            <p className="font-medium text-sabu-ink">
+              {product.returnPolicyLabel ??
+                (product.returnsAllowed === false
+                  ? "No Returns Available for This Item."
+                  : `Returns within ${product.returnWindowDays ?? 7} day(s)`)}
+            </p>
+            {product.returnsAllowed !== false &&
+              product.returnPolicyDescription && (
+                <p className="mt-1">{product.returnPolicyDescription}</p>
+              )}
+            {product.returnConditions && product.returnsAllowed !== false && (
+              <p className="mt-1">Conditions: {product.returnConditions}</p>
+            )}
+          </div>
 
           <div className="mt-5 flex items-baseline gap-2">
             <span className="text-2xl font-medium text-sabu-ink">

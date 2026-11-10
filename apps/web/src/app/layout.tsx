@@ -18,9 +18,9 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Sabu — Shop Ethiopia",
+  title: "Sabu Online Shopping — Ethiopia",
   description:
-    "Retail, wholesale, and Dubai special orders with delivery across Ethiopia.",
+    "Shop fashion, home, beauty, electronics, and more. Retail, wholesale, and Dubai special orders delivered across Ethiopia.",
 };
 
 export default function RootLayout({

@@ -60,6 +60,17 @@ export default function CartPage() {
                           ? " · bulk available"
                           : ""}
                     </p>
+                    {item.returnPolicyLabel && (
+                      <p
+                        className={`mt-1 text-xs ${
+                          item.returnsAllowed === false
+                            ? "text-amber-800"
+                            : "text-sabu-moss"
+                        }`}
+                      >
+                        {item.returnPolicyLabel}
+                      </p>
+                    )}
                     {item.bulkEnabled && (
                       <div className="mt-1.5 flex gap-1">
                         {[10, 50, 100].map((n) => (

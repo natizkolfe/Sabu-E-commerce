@@ -1,5 +1,12 @@
-import { Body, Controller, Get, Param, Post, Headers } from '@nestjs/common';
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { Body, Controller, Get, Param, Post, Put, Headers } from '@nestjs/common';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -53,6 +60,55 @@ class RejectDto {
   reason!: string;
 }
 
+class NotesDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
+class ClarificationDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(1000)
+  notes!: string;
+}
+
+class TelebirrSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  merchantAccount?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(10)
+  @MaxLength(2000)
+  instructions?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  helpText?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(200)
+  txnFormatRegex?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 class MockCompleteDto {
   @IsString()
   @MinLength(3)
@@ -77,6 +133,27 @@ export class PaymentsController {
   @Get('methods')
   methods() {
     return this.paymentsService.listActiveMethods();
+  }
+
+  @Public()
+  @Get('telebirr/settings')
+  telebirrSettings() {
+    return this.paymentsService.getTelebirrSettings();
+  }
+
+  @Get('admin/telebirr/settings')
+  @RequirePermissions('payments.verify')
+  adminTelebirrSettings() {
+    return this.paymentsService.getTelebirrSettings();
+  }
+
+  @Put('admin/telebirr/settings')
+  @RequirePermissions('payments.verify')
+  updateTelebirr(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: TelebirrSettingsDto,
+  ) {
+    return this.paymentsService.updateTelebirrSettings(user, dto);
   }
 
   @Public()
@@ -143,5 +220,31 @@ export class PaymentsController {
     @Body() dto: RejectDto,
   ) {
     return this.paymentsService.rejectBankTransfer(user, id, dto.reason);
+  }
+
+  @Post('transactions/:id/clarification')
+  @RequirePermissions('payments.verify')
+  clarification(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ClarificationDto,
+  ) {
+    return this.paymentsService.requestClarification(user, id, dto.notes);
+  }
+
+  @Post('transactions/:id/flag-duplicate')
+  @RequirePermissions('payments.verify')
+  flagDuplicate(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: NotesDto,
+  ) {
+    return this.paymentsService.flagDuplicate(user, id, dto.notes);
+  }
+
+  @Get('transactions/:id/verification-logs')
+  @RequirePermissions('payments.verify')
+  verificationLogs(@Param('id') id: string) {
+    return this.paymentsService.listVerificationLogs(id);
   }
 }

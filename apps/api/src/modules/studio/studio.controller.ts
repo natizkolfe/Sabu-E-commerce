@@ -1,5 +1,14 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Param,
+  Post,
+  Res,
+} from '@nestjs/common';
 import { IsBoolean, IsOptional, IsUUID } from 'class-validator';
+import type { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -47,6 +56,14 @@ export class StudioController {
   @Get('products/:productId/previews')
   previews(@Param('productId') productId: string) {
     return this.studio.listPublishedForProduct(productId);
+  }
+
+  @Public()
+  @Get('images/:id/preview')
+  @Header('Cache-Control', 'public, max-age=120')
+  async imagePreview(@Param('id') id: string, @Res() res: Response) {
+    const svg = await this.studio.renderPreviewSvg(id);
+    res.type('image/svg+xml').send(svg);
   }
 
   @Post('generate')

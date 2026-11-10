@@ -42,6 +42,79 @@ export class PaymentsService {
     }));
   }
 
+  async getTelebirrSettings() {
+    const { rows } = await this.db.query<{
+      display_name: string;
+      merchant_account: string;
+      instructions: string;
+      help_text: string | null;
+      txn_format_regex: string;
+      is_active: boolean;
+    }>(
+      `SELECT display_name, merchant_account, instructions, help_text,
+              txn_format_regex, is_active
+       FROM payments.telebirr_merchant_settings WHERE id = 1`,
+    );
+    const r = rows[0];
+    return {
+      displayName: r?.display_name ?? 'Sabu Online Shopping',
+      merchantAccount:
+        r?.merchant_account ?? 'Configure Telebirr merchant account',
+      instructions:
+        r?.instructions ??
+        'Send the exact Total Payable via Telebirr, then enter the transaction reference.',
+      helpText: r?.help_text ?? null,
+      txnFormatRegex: r?.txn_format_regex ?? '^[A-Za-z0-9\\-]{6,40}$',
+      isActive: r?.is_active ?? true,
+    };
+  }
+
+  async updateTelebirrSettings(
+    user: AuthUser,
+    input: {
+      displayName?: string;
+      merchantAccount?: string;
+      instructions?: string;
+      helpText?: string | null;
+      txnFormatRegex?: string;
+      isActive?: boolean;
+    },
+  ) {
+    await this.db.query(
+      `UPDATE payments.telebirr_merchant_settings SET
+         display_name = COALESCE($1, display_name),
+         merchant_account = COALESCE($2, merchant_account),
+         instructions = COALESCE($3, instructions),
+         help_text = CASE WHEN $4::boolean THEN $5 ELSE help_text END,
+         txn_format_regex = COALESCE($6, txn_format_regex),
+         is_active = COALESCE($7, is_active),
+         updated_by = $8,
+         updated_at = now()
+       WHERE id = 1`,
+      [
+        input.displayName ?? null,
+        input.merchantAccount ?? null,
+        input.instructions ?? null,
+        input.helpText !== undefined,
+        input.helpText ?? null,
+        input.txnFormatRegex ?? null,
+        input.isActive ?? null,
+        user.id,
+      ],
+    );
+    return this.getTelebirrSettings();
+  }
+
+  validateTelebirrTxnId(txnId: string, regex: string) {
+    const trimmed = txnId.trim();
+    if (!trimmed) return false;
+    try {
+      return new RegExp(regex).test(trimmed);
+    } catch {
+      return /^[A-Za-z0-9-]{6,40}$/.test(trimmed);
+    }
+  }
+
   async listBankAccounts() {
     const { rows } = await this.db.query<{
       id: string;
@@ -360,38 +433,95 @@ export class PaymentsService {
       amount: string;
       currency: string;
       customer_reference: string | null;
+      provider_reference: string | null;
       manual_proof_key: string | null;
       order_number: string;
       order_id: string;
       bank_name: string | null;
+      method_code: string;
+      method_name: string;
+      recipient_name: string | null;
+      recipient_phone: string | null;
+      subtotal: string;
+      delivery_fee: string;
+      grand_total: string;
       initiated_at: Date;
+      duplicate_count: string;
     }>(
       `SELECT t.id, t.merchant_reference, t.amount::text, t.currency, t.customer_reference,
-              t.manual_proof_key, o.order_number, o.id AS order_id,
-              b.bank_name, t.initiated_at
+              t.provider_reference, t.manual_proof_key, o.order_number, o.id AS order_id,
+              b.bank_name, m.code AS method_code, m.display_name AS method_name,
+              o.ship_recipient_name AS recipient_name, o.ship_recipient_phone AS recipient_phone,
+              o.subtotal::text, o.delivery_fee::text, o.grand_total::text,
+              t.initiated_at,
+              (
+                SELECT count(*)::text FROM payments.payment_transactions t2
+                WHERE t2.provider_reference IS NOT NULL
+                  AND t.provider_reference IS NOT NULL
+                  AND lower(t2.provider_reference) = lower(t.provider_reference)
+                  AND t2.id <> t.id
+              ) AS duplicate_count
        FROM payments.payment_transactions t
        JOIN payments.payment_intents i ON i.id = t.payment_intent_id
        JOIN sales.orders o ON o.id = i.order_id
        JOIN payments.payment_methods m ON m.id = t.payment_method_id
        LEFT JOIN payments.company_bank_accounts b ON b.id = t.company_bank_account_id
-       WHERE m.code = 'bank_transfer_manual' AND t.status = 'pending'
+       WHERE m.code IN ('bank_transfer_manual', 'telebirr_manual') AND t.status = 'pending'
        ORDER BY t.initiated_at`,
     );
-    return rows.map((r) => ({
-      transactionId: r.id,
-      merchantReference: r.merchant_reference,
-      amount: Number(r.amount),
-      currency: r.currency,
-      customerReference: r.customer_reference,
-      receiptKey: r.manual_proof_key,
-      orderNumber: r.order_number,
-      orderId: r.order_id,
-      bankName: r.bank_name,
-      submittedAt: r.initiated_at,
-    }));
+
+    const items = [];
+    for (const r of rows) {
+      const { rows: itemRows } = await this.db.query<{
+        name_snapshot: string;
+        quantity: string;
+        line_total: string;
+      }>(
+        `SELECT name_snapshot, quantity::text, line_total::text
+         FROM sales.order_items WHERE order_id = $1 ORDER BY line_no`,
+        [r.order_id],
+      );
+      items.push({
+        transactionId: r.id,
+        methodCode: r.method_code,
+        methodName: r.method_name,
+        merchantReference: r.merchant_reference,
+        amount: Number(r.amount),
+        currency: r.currency,
+        customerReference: r.customer_reference,
+        providerReference: r.provider_reference,
+        telebirrTxnId: r.method_code === 'telebirr_manual' ? r.provider_reference : null,
+        receiptKey: r.manual_proof_key,
+        orderNumber: r.order_number,
+        orderId: r.order_id,
+        bankName: r.bank_name,
+        customerName: r.recipient_name,
+        phone: r.recipient_phone,
+        subtotal: Number(r.subtotal),
+        deliveryFee: Number(r.delivery_fee),
+        grandTotal: Number(r.grand_total),
+        duplicateFlag: Number(r.duplicate_count) > 0,
+        items: itemRows.map((it) => ({
+          name: it.name_snapshot,
+          quantity: Number(it.quantity),
+          lineTotal: Number(it.line_total),
+        })),
+        submittedAt: r.initiated_at,
+      });
+    }
+    return items;
   }
 
   async approveBankTransfer(user: AuthUser, transactionId: string) {
+    return this.verifyManualPayment(user, transactionId, 'verified');
+  }
+
+  async verifyManualPayment(
+    user: AuthUser,
+    transactionId: string,
+    action: 'verified' | 'flagged_duplicate' = 'verified',
+    notes?: string,
+  ) {
     const client = await this.db.getPool().connect();
     try {
       await client.query('BEGIN');
@@ -400,9 +530,12 @@ export class PaymentsService {
         payment_intent_id: string;
         status: string;
         merchant_reference: string;
+        order_id: string;
       }>(
-        `SELECT id, payment_intent_id, status, merchant_reference
-         FROM payments.payment_transactions WHERE id = $1 FOR UPDATE`,
+        `SELECT t.id, t.payment_intent_id, t.status, t.merchant_reference, i.order_id
+         FROM payments.payment_transactions t
+         JOIN payments.payment_intents i ON i.id = t.payment_intent_id
+         WHERE t.id = $1 FOR UPDATE OF t`,
         [transactionId],
       );
       const tx = rows[0];
@@ -423,6 +556,12 @@ export class PaymentsService {
            (transaction_id, from_status, to_status, source, changed_by)
          VALUES ($1,'pending','succeeded','admin',$2)`,
         [tx.id, user.id],
+      );
+      await client.query(
+        `INSERT INTO payments.payment_verification_logs
+           (transaction_id, order_id, action, notes, actor_user_id)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [tx.id, tx.order_id, action, notes ?? null, user.id],
       );
       await this.applySuccessfulIntent(client, tx.payment_intent_id);
       await client.query(
@@ -445,8 +584,23 @@ export class PaymentsService {
     transactionId: string,
     reason: string,
   ) {
-    const { rows } = await this.db.query<{ id: string; status: string }>(
-      `SELECT id, status FROM payments.payment_transactions WHERE id = $1`,
+    return this.rejectManualPayment(user, transactionId, reason);
+  }
+
+  async rejectManualPayment(
+    user: AuthUser,
+    transactionId: string,
+    reason: string,
+  ) {
+    const { rows } = await this.db.query<{
+      id: string;
+      status: string;
+      order_id: string;
+    }>(
+      `SELECT t.id, t.status, i.order_id
+       FROM payments.payment_transactions t
+       JOIN payments.payment_intents i ON i.id = t.payment_intent_id
+       WHERE t.id = $1`,
       [transactionId],
     );
     if (!rows[0]) throw new NotFoundException('Transaction not found');
@@ -466,7 +620,85 @@ export class PaymentsService {
        VALUES ($1,'pending','failed','admin',$2)`,
       [transactionId, user.id],
     );
+    await this.db.query(
+      `INSERT INTO payments.payment_verification_logs
+         (transaction_id, order_id, action, notes, actor_user_id)
+       VALUES ($1,$2,'rejected',$3,$4)`,
+      [transactionId, rows[0].order_id, reason, user.id],
+    );
+    await this.db.query(
+      `UPDATE sales.orders
+       SET payment_status = 'unpaid', updated_at = now()
+       WHERE id = $1 AND payment_status = 'pending_verification'`,
+      [rows[0].order_id],
+    );
     return { ok: true };
+  }
+
+  async requestClarification(
+    user: AuthUser,
+    transactionId: string,
+    notes: string,
+  ) {
+    const { rows } = await this.db.query<{ id: string; order_id: string }>(
+      `SELECT t.id, i.order_id
+       FROM payments.payment_transactions t
+       JOIN payments.payment_intents i ON i.id = t.payment_intent_id
+       WHERE t.id = $1`,
+      [transactionId],
+    );
+    if (!rows[0]) throw new NotFoundException('Transaction not found');
+    await this.db.query(
+      `INSERT INTO payments.payment_verification_logs
+         (transaction_id, order_id, action, notes, actor_user_id)
+       VALUES ($1,$2,'clarification_requested',$3,$4)`,
+      [transactionId, rows[0].order_id, notes, user.id],
+    );
+    return { ok: true };
+  }
+
+  async flagDuplicate(user: AuthUser, transactionId: string, notes?: string) {
+    const { rows } = await this.db.query<{ id: string; order_id: string }>(
+      `SELECT t.id, i.order_id
+       FROM payments.payment_transactions t
+       JOIN payments.payment_intents i ON i.id = t.payment_intent_id
+       WHERE t.id = $1`,
+      [transactionId],
+    );
+    if (!rows[0]) throw new NotFoundException('Transaction not found');
+    await this.db.query(
+      `INSERT INTO payments.payment_verification_logs
+         (transaction_id, order_id, action, notes, actor_user_id)
+       VALUES ($1,$2,'flagged_duplicate',$3,$4)`,
+      [transactionId, rows[0].order_id, notes ?? 'Possible duplicate TXN ID', user.id],
+    );
+    return { ok: true };
+  }
+
+  async listVerificationLogs(transactionId: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      action: string;
+      notes: string | null;
+      actor_user_id: string | null;
+      created_at: Date;
+      actor_name: string | null;
+    }>(
+      `SELECT l.id::text, l.action, l.notes, l.actor_user_id, l.created_at, u.full_name AS actor_name
+       FROM payments.payment_verification_logs l
+       LEFT JOIN iam.users u ON u.id = l.actor_user_id
+       WHERE l.transaction_id = $1
+       ORDER BY l.created_at DESC`,
+      [transactionId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      notes: r.notes,
+      actorUserId: r.actor_user_id,
+      actorName: r.actor_name,
+      createdAt: r.created_at,
+    }));
   }
 
   private async markTransactionSucceeded(
@@ -538,6 +770,14 @@ export class PaymentsService {
        SET payment_status = 'paid',
            amount_paid = $2,
            status = CASE WHEN status = 'pending_payment' THEN 'confirmed' ELSE status END,
+           approval_status = CASE
+             WHEN approval_status IN ('approved', 'rejected') THEN approval_status
+             ELSE 'pending'
+           END,
+           qa_status = CASE
+             WHEN qa_status IN ('passed', 'failed', 'pending') THEN qa_status
+             ELSE 'not_started'
+           END,
            updated_at = now()
        WHERE id = $1`,
       [orderId, rows[0].amount],
@@ -545,6 +785,18 @@ export class PaymentsService {
     await client.query(
       `INSERT INTO sales.order_status_history (order_id, from_status, to_status, reason)
        VALUES ($1, 'pending_payment', 'confirmed', 'Payment verified')`,
+      [orderId],
+    );
+    await client.query(
+      `INSERT INTO sales.order_approvals (order_id, action, from_status, to_status, notes)
+       VALUES ($1, 'submitted', 'not_required', 'pending',
+               'Awaiting admin approval after payment verification')`,
+      [orderId],
+    );
+    await client.query(
+      `INSERT INTO notify.admin_alerts (alert_type, severity, title, body, order_id)
+       VALUES ('pending_approval', 'warning', 'Order awaiting approval',
+               'Payment verified — admin approval required', $1)`,
       [orderId],
     );
     await client.query(

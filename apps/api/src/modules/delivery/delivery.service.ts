@@ -43,26 +43,431 @@ export class DeliveryService {
     const { rows } = await this.db.query<{
       offer_ttl_minutes: number;
       default_speed_kmh: string;
-    }>(`SELECT offer_ttl_minutes, default_speed_kmh::text FROM delivery.dispatch_settings WHERE id = 1`);
+      fee_per_km: string;
+      min_fee: string;
+      max_fee: string | null;
+      free_over_amount: string | null;
+      origin_lng: number | null;
+      origin_lat: number | null;
+      origin_warehouse_id: string | null;
+      warehouse_name: string | null;
+      warehouse_address: string | null;
+      standard_enabled: boolean;
+      express_enabled: boolean;
+      standard_base_fare: string;
+      express_base_fare: string;
+      express_fee_per_km: string | null;
+      express_surcharge: string;
+      peak_surcharge: string;
+      holiday_surcharge: string;
+      standard_eta_buffer_minutes: number;
+      express_eta_buffer_minutes: number;
+      express_speed_kmh: string | null;
+      promo_discount_amount: string;
+      promo_discount_percent: string;
+      promo_label: string | null;
+      eta_disclaimer: string;
+    }>(
+      `SELECT s.offer_ttl_minutes, s.default_speed_kmh::text,
+              s.fee_per_km::text, s.min_fee::text, s.max_fee::text,
+              s.free_over_amount::text, s.origin_lng, s.origin_lat,
+              s.origin_warehouse_id, w.name AS warehouse_name, w.address_text AS warehouse_address,
+              s.standard_enabled, s.express_enabled,
+              s.standard_base_fare::text, s.express_base_fare::text,
+              s.express_fee_per_km::text, s.express_surcharge::text,
+              s.peak_surcharge::text, s.holiday_surcharge::text,
+              s.standard_eta_buffer_minutes, s.express_eta_buffer_minutes,
+              s.express_speed_kmh::text,
+              s.promo_discount_amount::text, s.promo_discount_percent::text,
+              s.promo_label, s.eta_disclaimer
+       FROM delivery.dispatch_settings s
+       LEFT JOIN inventory.warehouses w ON w.id = s.origin_warehouse_id
+       WHERE s.id = 1`,
+    );
+    const r = rows[0];
+    const expressFeePerKm =
+      r?.express_fee_per_km != null ? Number(r.express_fee_per_km) : null;
+    const expressConfigured =
+      expressFeePerKm != null && !Number.isNaN(expressFeePerKm);
     return {
-      offerTtlMinutes: rows[0]?.offer_ttl_minutes ?? 15,
-      defaultSpeedKmh: Number(rows[0]?.default_speed_kmh ?? 25),
+      offerTtlMinutes: r?.offer_ttl_minutes ?? 15,
+      defaultSpeedKmh: Number(r?.default_speed_kmh ?? 25),
+      feePerKm: Number(r?.fee_per_km ?? 5),
+      minFee: Number(r?.min_fee ?? 100),
+      maxFee: r?.max_fee != null ? Number(r.max_fee) : null,
+      freeOverAmount:
+        r?.free_over_amount != null ? Number(r.free_over_amount) : null,
+      originLng: r?.origin_lng ?? 38.7125,
+      originLat: r?.origin_lat ?? 9.033,
+      originWarehouseId: r?.origin_warehouse_id ?? null,
+      originName: r?.warehouse_name ?? 'Kolfe Atena Tera',
+      originAddress:
+        r?.warehouse_address ?? 'Kolfe Atena Tera, Addis Ababa, Ethiopia',
+      standardEnabled: r?.standard_enabled ?? true,
+      expressEnabled: Boolean(r?.express_enabled && expressConfigured),
+      expressConfigured,
+      standardBaseFare: Number(r?.standard_base_fare ?? 100),
+      expressBaseFare: Number(r?.express_base_fare ?? 100),
+      expressFeePerKm,
+      expressSurcharge: Number(r?.express_surcharge ?? 0),
+      peakSurcharge: Number(r?.peak_surcharge ?? 0),
+      holidaySurcharge: Number(r?.holiday_surcharge ?? 0),
+      standardEtaBufferMinutes: r?.standard_eta_buffer_minutes ?? 20,
+      expressEtaBufferMinutes: r?.express_eta_buffer_minutes ?? 10,
+      expressSpeedKmh:
+        r?.express_speed_kmh != null ? Number(r.express_speed_kmh) : null,
+      promoDiscountAmount: Number(r?.promo_discount_amount ?? 0),
+      promoDiscountPercent: Number(r?.promo_discount_percent ?? 0),
+      promoLabel: r?.promo_label ?? null,
+      etaDisclaimer:
+        r?.eta_disclaimer ??
+        'Estimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays.',
     };
   }
 
   async updateSettings(input: {
     offerTtlMinutes?: number;
     defaultSpeedKmh?: number;
+    feePerKm?: number;
+    minFee?: number;
+    maxFee?: number | null;
+    freeOverAmount?: number | null;
+    originLng?: number;
+    originLat?: number;
+    standardEnabled?: boolean;
+    expressEnabled?: boolean;
+    standardBaseFare?: number;
+    expressBaseFare?: number;
+    expressFeePerKm?: number | null;
+    expressSurcharge?: number;
+    peakSurcharge?: number;
+    holidaySurcharge?: number;
+    standardEtaBufferMinutes?: number;
+    expressEtaBufferMinutes?: number;
+    expressSpeedKmh?: number | null;
+    promoDiscountAmount?: number;
+    promoDiscountPercent?: number;
+    promoLabel?: string | null;
+    etaDisclaimer?: string;
+    actorId?: string;
   }) {
+    const before = await this.getSettings();
+
+    // Express cannot be enabled until a rate is configured
+    let expressEnabled = input.expressEnabled;
+    const nextExpressRate =
+      input.expressFeePerKm !== undefined
+        ? input.expressFeePerKm
+        : before.expressFeePerKm;
+    if (expressEnabled === true && (nextExpressRate == null || nextExpressRate < 0)) {
+      expressEnabled = false;
+    }
+
     await this.db.query(
       `UPDATE delivery.dispatch_settings SET
          offer_ttl_minutes = COALESCE($1, offer_ttl_minutes),
          default_speed_kmh = COALESCE($2, default_speed_kmh),
+         fee_per_km = COALESCE($3, fee_per_km),
+         min_fee = COALESCE($4, min_fee),
+         max_fee = CASE WHEN $5::boolean THEN $6 ELSE max_fee END,
+         free_over_amount = CASE WHEN $7::boolean THEN $8 ELSE free_over_amount END,
+         origin_lng = COALESCE($9, origin_lng),
+         origin_lat = COALESCE($10, origin_lat),
+         standard_enabled = COALESCE($11, standard_enabled),
+         express_enabled = COALESCE($12, express_enabled),
+         standard_base_fare = COALESCE($13, standard_base_fare),
+         express_base_fare = COALESCE($14, express_base_fare),
+         express_fee_per_km = CASE WHEN $15::boolean THEN $16 ELSE express_fee_per_km END,
+         express_surcharge = COALESCE($17, express_surcharge),
+         peak_surcharge = COALESCE($18, peak_surcharge),
+         holiday_surcharge = COALESCE($19, holiday_surcharge),
+         standard_eta_buffer_minutes = COALESCE($20, standard_eta_buffer_minutes),
+         express_eta_buffer_minutes = COALESCE($21, express_eta_buffer_minutes),
+         express_speed_kmh = CASE WHEN $22::boolean THEN $23 ELSE express_speed_kmh END,
+         promo_discount_amount = COALESCE($24, promo_discount_amount),
+         promo_discount_percent = COALESCE($25, promo_discount_percent),
+         promo_label = CASE WHEN $26::boolean THEN $27 ELSE promo_label END,
+         eta_disclaimer = COALESCE($28, eta_disclaimer),
          updated_at = now()
        WHERE id = 1`,
-      [input.offerTtlMinutes ?? null, input.defaultSpeedKmh ?? null],
+      [
+        input.offerTtlMinutes ?? null,
+        input.defaultSpeedKmh ?? null,
+        input.feePerKm ?? null,
+        input.minFee ?? null,
+        input.maxFee !== undefined,
+        input.maxFee ?? null,
+        input.freeOverAmount !== undefined,
+        input.freeOverAmount ?? null,
+        input.originLng ?? null,
+        input.originLat ?? null,
+        input.standardEnabled ?? null,
+        expressEnabled ?? null,
+        input.standardBaseFare ?? null,
+        input.expressBaseFare ?? null,
+        input.expressFeePerKm !== undefined,
+        input.expressFeePerKm ?? null,
+        input.expressSurcharge ?? null,
+        input.peakSurcharge ?? null,
+        input.holidaySurcharge ?? null,
+        input.standardEtaBufferMinutes ?? null,
+        input.expressEtaBufferMinutes ?? null,
+        input.expressSpeedKmh !== undefined,
+        input.expressSpeedKmh ?? null,
+        input.promoDiscountAmount ?? null,
+        input.promoDiscountPercent ?? null,
+        input.promoLabel !== undefined,
+        input.promoLabel ?? null,
+        input.etaDisclaimer ?? null,
+      ],
     );
-    return this.getSettings();
+
+    await this.db.query(
+      `UPDATE delivery.service_types
+       SET is_enabled = COALESCE($1, is_enabled), updated_at = now()
+       WHERE code = 'standard'`,
+      [input.standardEnabled ?? null],
+    );
+    await this.db.query(
+      `UPDATE delivery.service_types
+       SET is_enabled = COALESCE($1, is_enabled), updated_at = now()
+       WHERE code = 'express'`,
+      [expressEnabled ?? null],
+    );
+
+    if (input.originLng != null && input.originLat != null) {
+      await this.db.query(
+        `UPDATE inventory.warehouses
+         SET location = ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
+             updated_at = now()
+         WHERE code = 'ADD-MAIN'`,
+        [input.originLng, input.originLat],
+      );
+    }
+
+    const after = await this.getSettings();
+    await this.db.query(
+      `INSERT INTO delivery.pricing_audit_logs
+         (actor_id, action, before_snapshot, after_snapshot)
+       VALUES ($1, 'settings_updated', $2::jsonb, $3::jsonb)`,
+      [input.actorId ?? null, JSON.stringify(before), JSON.stringify(after)],
+    );
+    await this.db.query(
+      `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
+       VALUES ('delivery', 'dispatch_settings', 'delivery.pricing_updated', $1::jsonb)`,
+      [
+        JSON.stringify({
+          actorId: input.actorId ?? null,
+          at: new Date().toISOString(),
+          after,
+        }),
+      ],
+    );
+    return after;
+  }
+
+  /**
+   * Kolfe Atena Tera origin quote.
+   * Standard: baseFare + (km × rate). Express: only when admin-enabled + rate set.
+   */
+  async quoteDelivery(opts: {
+    lat?: number;
+    lng?: number;
+    subtotal?: number;
+    serviceType?: 'standard' | 'express';
+  }) {
+    const settings = await this.getSettings();
+    const requested = opts.serviceType ?? 'standard';
+    const etaDisclaimer = settings.etaDisclaimer;
+
+    const services = [
+      {
+        code: 'standard' as const,
+        name: 'Standard Delivery',
+        enabled: settings.standardEnabled,
+        available: settings.standardEnabled,
+        unavailableReason: settings.standardEnabled
+          ? null
+          : 'Standard delivery is temporarily unavailable',
+      },
+      {
+        code: 'express' as const,
+        name: 'Express Delivery',
+        enabled: settings.expressEnabled,
+        available: settings.expressEnabled && settings.expressConfigured,
+        unavailableReason: !settings.expressConfigured
+          ? 'Express pricing has not been configured by the administrator'
+          : !settings.expressEnabled
+            ? 'Express delivery is currently disabled'
+            : null,
+      },
+    ];
+
+    if (
+      opts.lat == null ||
+      opts.lng == null ||
+      Number.isNaN(opts.lat) ||
+      Number.isNaN(opts.lng)
+    ) {
+      return {
+        pendingAdmin: true,
+        routeSource: 'pending' as const,
+        serviceType: requested,
+        distanceKm: null,
+        feePerKm: settings.feePerKm,
+        baseFare: settings.standardBaseFare,
+        deliveryFee: null,
+        etaMinutes: null,
+        etaWindowText: null,
+        etaIsEstimate: true,
+        etaDisclaimer,
+        minApplied: false,
+        maxApplied: false,
+        freeApplied: false,
+        services,
+        origin: {
+          lng: settings.originLng,
+          lat: settings.originLat,
+          name: settings.originName,
+          address: settings.originAddress,
+        },
+        message:
+          'Confirm a delivery pin on the map to calculate distance and fee.',
+      };
+    }
+
+    const service = services.find((s) => s.code === requested) ?? services[0];
+    if (!service.available) {
+      throw new BadRequestException(
+        service.unavailableReason ??
+          `${service.name} is not available`,
+      );
+    }
+
+    const { rows } = await this.db.query<{ distance_m: string }>(
+      `SELECT ST_Distance(
+         ST_SetSRID(ST_MakePoint($1,$2),4326)::geography,
+         ST_SetSRID(ST_MakePoint($3,$4),4326)::geography
+       )::text AS distance_m`,
+      [settings.originLng, settings.originLat, opts.lng, opts.lat],
+    );
+    const distanceKm = round1(Number(rows[0]?.distance_m ?? 0) / 1000);
+
+    const isExpress = requested === 'express';
+    const baseFare = isExpress
+      ? settings.expressBaseFare
+      : settings.standardBaseFare;
+    const feePerKm = isExpress
+      ? (settings.expressFeePerKm as number)
+      : settings.feePerKm;
+    const serviceSurcharge = isExpress ? settings.expressSurcharge : 0;
+    const distanceCharge = round1(distanceKm * feePerKm);
+    let deliveryFee =
+      baseFare +
+      distanceCharge +
+      serviceSurcharge +
+      settings.peakSurcharge +
+      settings.holidaySurcharge;
+
+    let maxApplied = false;
+    let freeApplied = false;
+    let promoApplied = 0;
+
+    if (settings.maxFee != null && deliveryFee > settings.maxFee) {
+      deliveryFee = settings.maxFee;
+      maxApplied = true;
+    }
+
+    if (settings.promoDiscountPercent > 0) {
+      const pctOff = (deliveryFee * settings.promoDiscountPercent) / 100;
+      promoApplied += pctOff;
+      deliveryFee -= pctOff;
+    }
+    if (settings.promoDiscountAmount > 0) {
+      promoApplied += settings.promoDiscountAmount;
+      deliveryFee -= settings.promoDiscountAmount;
+    }
+    if (deliveryFee < 0) deliveryFee = 0;
+
+    if (
+      opts.subtotal != null &&
+      settings.freeOverAmount != null &&
+      opts.subtotal >= settings.freeOverAmount
+    ) {
+      deliveryFee = 0;
+      freeApplied = true;
+    }
+
+    deliveryFee = Math.round(deliveryFee * 100) / 100;
+    promoApplied = Math.round(promoApplied * 100) / 100;
+
+    const speedKmh = isExpress
+      ? settings.expressSpeedKmh ?? settings.defaultSpeedKmh * 1.25
+      : settings.defaultSpeedKmh;
+    const buffer = isExpress
+      ? settings.expressEtaBufferMinutes
+      : settings.standardEtaBufferMinutes;
+    const driveMinutes = Math.ceil((distanceKm / Math.max(speedKmh, 1)) * 60);
+    const etaMinutes = Math.max(20, driveMinutes + buffer);
+    const etaLow = Math.max(15, etaMinutes - 10);
+    const etaHigh = etaMinutes + 15;
+    const etaWindowText = `Estimated arrival in about ${etaLow}–${etaHigh} minutes`;
+
+    return {
+      pendingAdmin: false,
+      routeSource: 'geodesic' as const,
+      serviceType: requested,
+      distanceKm,
+      feePerKm,
+      baseFare,
+      distanceCharge,
+      serviceSurcharge,
+      peakSurcharge: settings.peakSurcharge,
+      holidaySurcharge: settings.holidaySurcharge,
+      promoApplied,
+      promoLabel: settings.promoLabel,
+      deliveryFee,
+      etaMinutes,
+      etaWindowText,
+      etaIsEstimate: true,
+      etaDisclaimer,
+      minApplied: false,
+      maxApplied,
+      freeApplied,
+      services,
+      origin: {
+        lng: settings.originLng,
+        lat: settings.originLat,
+        name: settings.originName,
+        address: settings.originAddress,
+      },
+      message: `${service.name}: ${baseFare} ETB base + ${distanceKm} km × ${feePerKm} ETB/km${
+        serviceSurcharge ? ` + ${serviceSurcharge} ETB surcharge` : ''
+      } (estimate).`,
+      snapshot: {
+        serviceType: requested,
+        distanceKm,
+        feePerKm,
+        baseFare,
+        distanceCharge,
+        serviceSurcharge,
+        peakSurcharge: settings.peakSurcharge,
+        holidaySurcharge: settings.holidaySurcharge,
+        promoApplied,
+        deliveryFee,
+        etaMinutes,
+        etaWindowText,
+        etaIsEstimate: true,
+        etaDisclaimer,
+        maxFee: settings.maxFee,
+        freeOverAmount: settings.freeOverAmount,
+        maxApplied,
+        freeApplied,
+        routeSource: 'geodesic',
+        originLng: settings.originLng,
+        originLat: settings.originLat,
+      },
+    };
   }
 
   /** Orders ready for delivery dispatch (paid/confirmed, local delivery). */
@@ -184,27 +589,44 @@ export class DeliveryService {
 
   async getDeliveryAdmin(deliveryId: string) {
     const base = await this.loadDeliveryDetail(deliveryId);
-    const { rows: offers } = await this.db.query<{
+    const { rows: assignments } = await this.db.query<{
       id: string;
       status: string;
       driver_name: string;
       driver_code: string;
+      driver_phone: string | null;
       offered_at: Date;
       responded_at: Date | null;
       offer_expires_at: Date | null;
+      assigned_by_name: string | null;
     }>(
       `SELECT a.id, a.status, u.full_name AS driver_name, dr.driver_code,
-              a.offered_at, a.responded_at, a.offer_expires_at
+              u.phone_e164 AS driver_phone,
+              a.offered_at, a.responded_at, a.offer_expires_at,
+              ab.full_name AS assigned_by_name
        FROM delivery.driver_assignments a
        JOIN delivery.drivers dr ON dr.id = a.driver_id
        JOIN iam.users u ON u.id = dr.user_id
+       LEFT JOIN iam.users ab ON ab.id = a.assigned_by
        WHERE a.delivery_id = $1
        ORDER BY a.offered_at DESC`,
       [deliveryId],
     );
     return {
       ...base,
-      offers: offers.map((o) => ({
+      assignments: assignments.map((o) => ({
+        id: o.id,
+        status: o.status,
+        driverName: o.driver_name,
+        driverCode: o.driver_code,
+        driverPhone: o.driver_phone,
+        offeredAt: o.offered_at,
+        respondedAt: o.responded_at,
+        expiresAt: o.offer_expires_at,
+        assignedByName: o.assigned_by_name,
+      })),
+      /** @deprecated use assignments — kept for older admin clients */
+      offers: assignments.map((o) => ({
         id: o.id,
         status: o.status,
         driverName: o.driver_name,
@@ -450,10 +872,19 @@ export class DeliveryService {
         ship_recipient_phone: string;
         ship_address_text: string;
         fulfillment_warehouse_id: string;
+        delivery_instructions: string | null;
+        landmark_name: string | null;
+        landmark_place_id: string | null;
+        location_type: string | null;
+        dropoff_lng: string | null;
+        dropoff_lat: string | null;
       }>(
         `SELECT id, order_number, status, payment_status,
                 ship_recipient_name, ship_recipient_phone, ship_address_text,
-                fulfillment_warehouse_id
+                fulfillment_warehouse_id, delivery_instructions,
+                landmark_name, landmark_place_id, location_type,
+                ST_X(ship_location::geometry)::text AS dropoff_lng,
+                ST_Y(ship_location::geometry)::text AS dropoff_lat
          FROM sales.orders WHERE id = $1 FOR UPDATE`,
         [orderId],
       );
@@ -461,6 +892,25 @@ export class DeliveryService {
       if (!order) throw new NotFoundException('Order not found');
       if (order.payment_status !== 'paid') {
         throw new BadRequestException('Order must be paid before dispatch');
+      }
+
+      const { rows: gates } = await client.query<{
+        approval_status: string;
+        qa_status: string;
+      }>(
+        `SELECT approval_status, qa_status FROM sales.orders WHERE id = $1`,
+        [orderId],
+      );
+      const gate = gates[0];
+      if (gate && gate.approval_status !== 'approved') {
+        throw new BadRequestException(
+          'Order must be approved by admin before dispatch',
+        );
+      }
+      if (gate && gate.qa_status !== 'passed') {
+        throw new BadRequestException(
+          'Order must pass QA before driver assignment',
+        );
       }
 
       const { rows: existing } = await client.query<{ id: string }>(
@@ -496,15 +946,23 @@ export class DeliveryService {
         [orderId],
       );
 
+      const mapsUrl =
+        order.dropoff_lat != null && order.dropoff_lng != null
+          ? `https://www.google.com/maps/dir/?api=1&destination=${order.dropoff_lat},${order.dropoff_lng}`
+          : null;
+
       const { rows: dels } = await client.query<{ id: string }>(
         `INSERT INTO delivery.deliveries (
            delivery_number, order_id, origin_warehouse_id, zone_id,
            dropoff_location, dropoff_address_text, recipient_name, recipient_phone,
-           distance_km, status, package_count, eta_minutes
+           distance_km, status, package_count, eta_minutes,
+           delivery_instructions, landmark_name, landmark_place_id,
+           location_type, google_maps_url
          ) VALUES (
            $1,$2,$3,$4,
            (SELECT ship_location FROM sales.orders WHERE id = $2),
-           $5,$6,$7,$8,'pending_assignment',$9,$10
+           $5,$6,$7,$8,'pending_assignment',$9,$10,
+           $11,$12,$13,$14,$15
          ) RETURNING id`,
         [
           deliveryNumber,
@@ -517,6 +975,11 @@ export class DeliveryService {
           distanceKm,
           items.length || 1,
           etaMinutes,
+          order.delivery_instructions,
+          order.landmark_name,
+          order.landmark_place_id,
+          order.location_type,
+          mapsUrl,
         ],
       );
       const deliveryId = dels[0].id;
@@ -542,12 +1005,22 @@ export class DeliveryService {
     }
   }
 
-  async offerToDriver(
+  /**
+   * Legacy offer endpoint — now performs direct admin assignment (no driver accept).
+   */
+  async offerToDriver(user: AuthUser, deliveryId: string, driverId: string) {
+    return this.assignDriverDirectly(user, deliveryId, driverId);
+  }
+
+  /**
+   * Admin manually assigns (or reassigns) a driver after contacting them by phone.
+   * No accept/decline step — assignment is immediate. Issues QR/PIN for PoD.
+   */
+  async assignDriverDirectly(
     user: AuthUser,
     deliveryId: string,
     driverId: string,
   ) {
-    const settings = await this.getSettings();
     const client = await this.db.getPool().connect();
     try {
       await client.query('BEGIN');
@@ -558,11 +1031,15 @@ export class DeliveryService {
         dropoff_address_text: string;
         distance_km: string | null;
         eta_minutes: number | null;
+        order_id: string;
         order_number: string;
         warehouse_name: string;
+        recipient_name: string;
+        recipient_phone: string;
       }>(
         `SELECT d.id, d.status, d.delivery_number, d.dropoff_address_text,
-                d.distance_km::text, d.eta_minutes, o.order_number, w.name AS warehouse_name
+                d.distance_km::text, d.eta_minutes, o.id AS order_id, o.order_number,
+                w.name AS warehouse_name, d.recipient_name, d.recipient_phone
          FROM delivery.deliveries d
          JOIN sales.orders o ON o.id = d.order_id
          JOIN inventory.warehouses w ON w.id = d.origin_warehouse_id
@@ -571,17 +1048,37 @@ export class DeliveryService {
       );
       const del = dels[0];
       if (!del) throw new NotFoundException('Delivery not found');
-      if (['delivered', 'cancelled', 'returned_to_warehouse'].includes(del.status)) {
-        throw new BadRequestException(`Cannot assign delivery in status=${del.status}`);
+      if (
+        ['delivered', 'cancelled', 'returned_to_warehouse', 'failed'].includes(
+          del.status,
+        )
+      ) {
+        throw new BadRequestException(
+          `Cannot assign delivery in status=${del.status}`,
+        );
       }
 
-      // Expire any live offers
-      await client.query(
-        `UPDATE delivery.driver_assignments
-         SET status = 'expired', responded_at = now()
-         WHERE delivery_id = $1 AND status = 'offered'`,
+      const { rows: prior } = await client.query<{
+        id: string;
+        driver_id: string;
+        status: string;
+      }>(
+        `SELECT id, driver_id, status FROM delivery.driver_assignments
+         WHERE delivery_id = $1 AND status IN ('offered','accepted')
+         FOR UPDATE`,
         [deliveryId],
       );
+      const previousDriverIds = new Set<string>();
+      for (const row of prior) {
+        previousDriverIds.add(row.driver_id);
+        await client.query(
+          `UPDATE delivery.driver_assignments
+           SET status = CASE WHEN status = 'offered' THEN 'expired' ELSE 'cancelled' END,
+               responded_at = COALESCE(responded_at, now())
+           WHERE id = $1`,
+          [row.id],
+        );
+      }
 
       const { rows: drivers } = await client.query<{
         id: string;
@@ -601,27 +1098,27 @@ export class DeliveryService {
         throw new BadRequestException('Driver not available');
       }
 
-      const offerToken = randomBytes(24).toString('base64url');
-      const expiresAt = new Date(
-        Date.now() + settings.offerTtlMinutes * 60_000,
-      );
+      const portalToken = randomBytes(24).toString('base64url');
+      // Long-lived portal token for QR/PIN verification (not an accept TTL)
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000);
 
       const { rows: assigns } = await client.query<{ id: string }>(
         `INSERT INTO delivery.driver_assignments (
            delivery_id, driver_id, assigned_by, assignment_method, status,
-           offer_token_hash, offer_expires_at, eta_minutes
-         ) VALUES ($1,$2,$3,'manual','offered',$4,$5,$6)
+           offer_token_hash, offer_expires_at, eta_minutes, responded_at
+         ) VALUES ($1,$2,$3,'manual','accepted',$4,$5,$6,now())
          RETURNING id`,
         [
           deliveryId,
           driverId,
           user.id,
-          sha256(offerToken),
+          sha256(portalToken),
           expiresAt.toISOString(),
           del.eta_minutes,
         ],
       );
 
+      const fromStatus = del.status;
       await client.query(
         `UPDATE delivery.deliveries
          SET status = 'assigned', updated_at = now()
@@ -629,56 +1126,128 @@ export class DeliveryService {
         [deliveryId],
       );
       await client.query(
+        `UPDATE delivery.drivers
+         SET availability = 'on_delivery', updated_at = now() WHERE id = $1`,
+        [driverId],
+      );
+
+      for (const prevId of previousDriverIds) {
+        if (prevId === driverId) continue;
+        const { rows: stillBusy } = await client.query<{ c: string }>(
+          `SELECT count(*)::text AS c FROM delivery.driver_assignments
+           WHERE driver_id = $1 AND status IN ('offered','accepted')`,
+          [prevId],
+        );
+        if (Number(stillBusy[0]?.c ?? 0) === 0) {
+          await client.query(
+            `UPDATE delivery.drivers
+             SET availability = 'available', updated_at = now()
+             WHERE id = $1 AND availability = 'on_delivery'`,
+            [prevId],
+          );
+        }
+      }
+
+      const { qrPlain, pinPlain } = await this.issueVerificationSecrets(
+        client,
+        deliveryId,
+      );
+
+      await client.query(
+        `UPDATE sales.orders
+         SET status = CASE
+               WHEN status IN ('confirmed','processing','ready_for_dispatch') THEN 'dispatched'
+               ELSE status
+             END,
+             updated_at = now()
+         WHERE id = $1`,
+        [del.order_id],
+      );
+
+      const reassigned = prior.length > 0;
+      await client.query(
         `INSERT INTO delivery.delivery_events (delivery_id, event_type, from_status, to_status, actor_id, note)
-         VALUES ($1,'offered',$2,'assigned',$3,$4)`,
+         VALUES ($1,$2,$3,'assigned',$4,$5)`,
         [
           deliveryId,
-          del.status,
+          reassigned ? 'reassigned' : 'assigned',
+          fromStatus,
           user.id,
-          `Offered to ${driver.full_name}`,
+          `${reassigned ? 'Reassigned' : 'Assigned'} to ${driver.full_name} by admin`,
         ],
       );
 
-      const link = `${this.webBase()}/driver/offer?token=${encodeURIComponent(offerToken)}`;
-      const whatsappText = [
-        `Hello ${driver.full_name.split(' ')[0]},`,
+      const trackLink = `${this.webBase()}/orders/track?orderNumber=${encodeURIComponent(del.order_number)}`;
+      const customerText = [
+        'Hello!',
         '',
-        'You have a new delivery request from Sabu Online Shopping.',
+        `Your Sabu Online Shopping order #${del.order_number} is on its way.`,
         '',
-        `Order: #${del.order_number}`,
-        `Pickup: ${del.warehouse_name}`,
-        `Destination: ${del.dropoff_address_text}`,
-        `Estimated Distance: ${del.distance_km ?? '—'} km`,
-        `Estimated Delivery Time: ${del.eta_minutes ?? '—'} minutes`,
+        `Driver: ${driver.full_name}`,
+        `Call driver: ${driver.phone_e164 ?? '—'}`,
+        `Estimated Arrival: ${del.eta_minutes ?? '—'} minutes`,
         '',
-        'Please open the secure link below to review and accept or decline:',
-        link,
+        'Please ensure that you or an authorized recipient is available.',
+        `Tracking: ${trackLink}`,
+        '',
+        `Delivery PIN (if QR unavailable): ${pinPlain}`,
+        `Show this QR token to the driver: ${qrPlain}`,
+        '',
+        'Thank you for choosing Sabu Online Shopping!',
       ].join('\n');
 
       await client.query(
         `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
-         VALUES ('delivery', $1, 'delivery.offer_whatsapp', $2::jsonb)`,
+         VALUES ('delivery', $1, 'delivery.customer_whatsapp', $2::jsonb)`,
         [
-          assigns[0].id,
+          deliveryId,
           JSON.stringify({
+            preferredContactChannel: 'whatsapp',
             channel: 'whatsapp',
-            to: driver.phone_e164,
-            text: whatsappText,
-            assignmentId: assigns[0].id,
+            phone: del.recipient_phone,
+            recipientPhone: del.recipient_phone,
+            text: customerText,
+            orderNumber: del.order_number,
+            orderId: del.order_id,
+            pin: pinPlain,
+            qrToken: qrPlain,
+            trackingUrl: trackLink,
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
+         VALUES ('delivery', $1, 'delivery.assigned', $2::jsonb)`,
+        [
+          deliveryId,
+          JSON.stringify({
             deliveryId,
-            offerLink: link,
+            assignmentId: assigns[0].id,
+            driverId,
+            assignedBy: user.id,
+            reassigned,
           }),
         ],
       );
 
       await client.query('COMMIT');
+
+      const dashboardUrl = `${this.webBase()}/driver/delivery?token=${encodeURIComponent(portalToken)}`;
       return {
         assignmentId: assigns[0].id,
-        offerToken,
-        offerLink: link,
-        expiresAt,
-        whatsappPreview: whatsappText,
+        reassigned,
         driverPhone: driver.phone_e164,
+        driverName: driver.full_name,
+        deliveryStatus: 'assigned',
+        dashboardUrl,
+        customerNotified: true,
+        qrIssued: Boolean(qrPlain),
+        // Legacy shape for older admin clients
+        offerToken: portalToken,
+        offerLink: dashboardUrl,
+        expiresAt,
+        callScript: null,
+        callUrl: null,
       };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -704,6 +1273,10 @@ export class DeliveryService {
       package_count: number;
       distance_km: string | null;
       delivery_instructions: string | null;
+      landmark_name: string | null;
+      location_type: string | null;
+      google_maps_url: string | null;
+      recipient_phone: string;
       order_number: string;
       warehouse_name: string;
       warehouse_address: string | null;
@@ -716,8 +1289,9 @@ export class DeliveryService {
               d.dropoff_address_text,
               ST_X(d.dropoff_location::geometry)::text AS dropoff_lng,
               ST_Y(d.dropoff_location::geometry)::text AS dropoff_lat,
-              d.recipient_name, d.package_count, d.distance_km::text,
-              d.delivery_instructions, o.order_number,
+              d.recipient_name, d.recipient_phone, d.package_count, d.distance_km::text,
+              d.delivery_instructions, d.landmark_name, d.location_type, d.google_maps_url,
+              o.order_number,
               w.name AS warehouse_name, w.address_text AS warehouse_address,
               ST_X(w.location::geometry)::text AS warehouse_lng,
               ST_Y(w.location::geometry)::text AS warehouse_lat,
@@ -750,6 +1324,14 @@ export class DeliveryService {
       distanceKm: r.distance_km != null ? Number(r.distance_km) : null,
       etaMinutes: r.eta_minutes,
       instructions: r.delivery_instructions,
+      landmarkName: r.landmark_name,
+      locationType: r.location_type,
+      recipientPhone: r.recipient_phone,
+      googleMapsUrl:
+        r.google_maps_url ??
+        (r.dropoff_lat != null && r.dropoff_lng != null
+          ? `https://www.google.com/maps/dir/?api=1&destination=${r.dropoff_lat},${r.dropoff_lng}`
+          : null),
       driverName: r.driver_name,
       pickup: {
         name: r.warehouse_name,
@@ -766,261 +1348,94 @@ export class DeliveryService {
     };
   }
 
-  async acceptOffer(token: string) {
-    const client = await this.db.getPool().connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query<{
-        id: string;
-        status: string;
-        delivery_id: string;
-        driver_id: string;
-        offer_expires_at: Date | null;
-        eta_minutes: number | null;
-      }>(
-        `SELECT id, status, delivery_id, driver_id, offer_expires_at, eta_minutes
-         FROM delivery.driver_assignments
-         WHERE offer_token_hash = $1 FOR UPDATE`,
-        [sha256(token)],
-      );
-      const offer = rows[0];
-      if (!offer) throw new NotFoundException('Assignment not found');
-      if (offer.status !== 'offered') {
-        throw new ConflictException(`Offer already ${offer.status}`);
-      }
-      if (
-        offer.offer_expires_at &&
-        offer.offer_expires_at.getTime() < Date.now()
-      ) {
-        await client.query(
-          `UPDATE delivery.driver_assignments SET status = 'expired', responded_at = now() WHERE id = $1`,
-          [offer.id],
-        );
-        await client.query('COMMIT');
-        throw new BadRequestException('Offer has expired');
-      }
-
-      // Ensure no other accepted assignment
-      const { rows: live } = await client.query<{ id: string }>(
-        `SELECT id FROM delivery.driver_assignments
-         WHERE delivery_id = $1 AND status = 'accepted' AND id <> $2`,
-        [offer.delivery_id, offer.id],
-      );
-      if (live[0]) throw new ConflictException('Delivery already accepted');
-
-      await client.query(
-        `UPDATE delivery.driver_assignments
-         SET status = 'accepted', responded_at = now() WHERE id = $1`,
-        [offer.id],
-      );
-      await client.query(
-        `UPDATE delivery.driver_assignments
-         SET status = 'cancelled', responded_at = now()
-         WHERE delivery_id = $1 AND status = 'offered' AND id <> $2`,
-        [offer.delivery_id, offer.id],
-      );
-      await client.query(
-        `UPDATE delivery.deliveries
-         SET status = 'accepted', updated_at = now() WHERE id = $1`,
-        [offer.delivery_id],
-      );
-      await client.query(
-        `UPDATE delivery.drivers
-         SET availability = 'on_delivery', updated_at = now() WHERE id = $1`,
-        [offer.driver_id],
-      );
-
-      const { qrPlain, pinPlain } = await this.issueVerificationSecrets(
-        client,
-        offer.delivery_id,
-      );
-
-      const { rows: meta } = await client.query<{
-        order_id: string;
-        order_number: string;
-        recipient_phone: string;
-        recipient_name: string;
-        driver_name: string;
-        driver_phone: string | null;
-        eta_minutes: number | null;
-      }>(
-        `SELECT o.id AS order_id, o.order_number, d.recipient_phone, d.recipient_name,
-                u.full_name AS driver_name, u.phone_e164 AS driver_phone, d.eta_minutes
-         FROM delivery.deliveries d
-         JOIN sales.orders o ON o.id = d.order_id
-         JOIN delivery.drivers dr ON dr.id = $2
-         JOIN iam.users u ON u.id = dr.user_id
-         WHERE d.id = $1`,
-        [offer.delivery_id, offer.driver_id],
-      );
-      const m = meta[0];
-
-      await client.query(
-        `UPDATE sales.orders
-         SET status = CASE
-               WHEN status IN ('confirmed','processing','ready_for_dispatch') THEN 'dispatched'
-               ELSE status
-             END,
-             updated_at = now()
-         WHERE id = $1`,
-        [m.order_id],
-      );
-
-      const trackTokenRow = await client.query<{ guest_track_token_hash: Buffer | null }>(
-        `SELECT guest_track_token_hash FROM sales.orders WHERE id = $1`,
-        [m.order_id],
-      );
-      // Customer WhatsApp notification (stub via outbox)
-      // Token is included when available on the assignment/customer payload;
-      // otherwise the customer recovers via order # + phone on the track page.
-      const trackToken =
-        typeof (m as { track_token?: string }).track_token === 'string'
-          ? (m as { track_token?: string }).track_token
-          : null;
-      const trackLink = trackToken
-        ? `${this.webBase()}/orders/track?orderNumber=${encodeURIComponent(m.order_number)}&token=${encodeURIComponent(trackToken)}`
-        : `${this.webBase()}/orders/track?orderNumber=${encodeURIComponent(m.order_number)}`;
-      const customerText = [
-        'Hello!',
-        '',
-        `Your Sabu Online Shopping order #${m.order_number} is on its way.`,
-        '',
-        `Driver: ${m.driver_name}`,
-        `Phone/WhatsApp: ${m.driver_phone ?? '—'}`,
-        `Estimated Arrival: ${m.eta_minutes ?? offer.eta_minutes ?? '—'} minutes`,
-        '',
-        'Please ensure that you or an authorized recipient is available.',
-        `Tracking: ${trackLink}`,
-        '',
-        `Delivery PIN (if QR unavailable): ${pinPlain}`,
-        `Show this QR token to the driver: ${qrPlain}`,
-        '',
-        'Thank you for choosing Sabu Online Shopping!',
-      ].join('\n');
-
-      await client.query(
-        `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
-         VALUES ('delivery', $1, 'delivery.customer_whatsapp', $2::jsonb)`,
-        [
-          offer.delivery_id,
-          JSON.stringify({
-            channel: 'whatsapp',
-            to: m.recipient_phone,
-            text: customerText,
-            orderNumber: m.order_number,
-            pin: pinPlain,
-            qrToken: qrPlain,
-          }),
-        ],
-      );
-      await client.query(
-        `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
-         VALUES ('delivery', $1, 'delivery.accepted', $2::jsonb)`,
-        [
-          offer.delivery_id,
-          JSON.stringify({
-            deliveryId: offer.delivery_id,
-            assignmentId: offer.id,
-            driverId: offer.driver_id,
-          }),
-        ],
-      );
-      await client.query(
-        `INSERT INTO delivery.delivery_events (delivery_id, event_type, from_status, to_status, note)
-         VALUES ($1,'accepted','assigned','accepted','Driver accepted offer')`,
-        [offer.delivery_id],
-      );
-
-      await client.query('COMMIT');
-      void trackTokenRow;
-
-      return {
-        ok: true,
-        deliveryId: offer.delivery_id,
-        assignmentToken: token,
-        dashboardUrl: `${this.webBase()}/driver/delivery?token=${encodeURIComponent(token)}`,
-        // QR/PIN returned only to server logs via notify; customer gets WhatsApp
-        customerNotified: true,
-        qrIssued: Boolean(qrPlain),
-      };
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+  async listLandmarks(opts?: { q?: string; city?: string }) {
+    const params: unknown[] = [];
+    const where = [`is_active = true`];
+    if (opts?.city) {
+      params.push(opts.city);
+      where.push(`city ILIKE $${params.length}`);
     }
+    if (opts?.q) {
+      params.push(`%${opts.q}%`);
+      where.push(
+        `(name ILIKE $${params.length} OR area ILIKE $${params.length})`,
+      );
+    }
+    const { rows } = await this.db.query<{
+      id: string;
+      name: string;
+      area: string;
+      city: string;
+      place_id: string | null;
+      category: string;
+      lng: string;
+      lat: string;
+    }>(
+      `SELECT id, name, area, city, place_id, category,
+              ST_X(location::geometry)::text AS lng,
+              ST_Y(location::geometry)::text AS lat
+       FROM delivery.landmarks
+       WHERE ${where.join(' AND ')}
+       ORDER BY sort_order, name
+       LIMIT 50`,
+      params,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      area: r.area,
+      city: r.city,
+      placeId: r.place_id,
+      category: r.category,
+      lng: Number(r.lng),
+      lat: Number(r.lat),
+    }));
   }
 
-  async declineOffer(token: string, reason?: string) {
-    const client = await this.db.getPool().connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query<{
-        id: string;
-        status: string;
-        delivery_id: string;
-      }>(
-        `SELECT id, status, delivery_id FROM delivery.driver_assignments
-         WHERE offer_token_hash = $1 FOR UPDATE`,
-        [sha256(token)],
-      );
-      const offer = rows[0];
-      if (!offer) throw new NotFoundException('Assignment not found');
-      if (offer.status !== 'offered') {
-        throw new ConflictException(`Offer already ${offer.status}`);
-      }
-      await client.query(
-        `UPDATE delivery.driver_assignments
-         SET status = 'rejected', reject_reason = $2, responded_at = now()
-         WHERE id = $1`,
-        [offer.id, reason ?? null],
-      );
-      await client.query(
-        `UPDATE delivery.deliveries
-         SET status = 'pending_assignment', updated_at = now()
-         WHERE id = $1`,
-        [offer.delivery_id],
-      );
-      await client.query(
-        `INSERT INTO delivery.delivery_events (delivery_id, event_type, from_status, to_status, note)
-         VALUES ($1,'declined','assigned','pending_assignment',$2)`,
-        [offer.delivery_id, reason ?? 'Driver declined'],
-      );
-      await client.query(
-        `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
-         VALUES ('delivery', $1, 'delivery.offer_declined', $2::jsonb)`,
-        [
-          offer.delivery_id,
-          JSON.stringify({ assignmentId: offer.id, reason }),
-        ],
-      );
-      await client.query('COMMIT');
-      return { ok: true, reassignable: true };
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+  async acceptOffer(token: string) {
+    // Manual admin assignment only — drivers no longer accept/decline in-app.
+    const existing = await this.getOfferByToken(token).catch(() => null);
+    if (existing?.status === 'accepted') {
+      return {
+        ok: true,
+        deliveryId: existing.deliveryId,
+        assignmentToken: token,
+        dashboardUrl: `${this.webBase()}/driver/delivery?token=${encodeURIComponent(token)}`,
+        customerNotified: false,
+        qrIssued: false,
+        alreadyAssigned: true,
+      };
     }
+    throw new BadRequestException(
+      'Driver accept/decline is disabled. An administrator assigns deliveries after contacting the driver by phone.',
+    );
+  }
+
+  async declineOffer(_token: string, _reason?: string) {
+    throw new BadRequestException(
+      'Driver accept/decline is disabled. An administrator assigns or reassigns deliveries after contacting the driver by phone.',
+    );
   }
 
   async getDriverDashboard(token: string) {
     const offer = await this.getOfferByToken(token);
     if (offer.status !== 'accepted' && offer.status !== 'completed') {
-      // Allow in-progress delivery statuses via delivery table
-      if (!['accepted', 'picked_up', 'in_transit', 'arrived'].includes(
-        // re-fetch delivery status
-        (
-          await this.db.query<{ status: string }>(
-            `SELECT status FROM delivery.deliveries WHERE id = $1`,
-            [offer.deliveryId],
-          )
-        ).rows[0]?.status ?? '',
-      )) {
-        if (offer.status !== 'accepted') {
-          throw new BadRequestException('Assignment not active');
-        }
-      }
+      throw new BadRequestException('Assignment not active');
+    }
+    const deliveryStatus =
+      (
+        await this.db.query<{ status: string }>(
+          `SELECT status FROM delivery.deliveries WHERE id = $1`,
+          [offer.deliveryId],
+        )
+      ).rows[0]?.status ?? '';
+    if (
+      !['assigned', 'accepted', 'picked_up', 'in_transit', 'arrived'].includes(
+        deliveryStatus,
+      ) &&
+      offer.status !== 'completed'
+    ) {
+      throw new BadRequestException('Delivery is not active for this driver');
     }
 
     const { rows: items } = await this.db.query<{
@@ -1381,15 +1796,42 @@ export class DeliveryService {
       warehouse_name: string;
       lng: string | null;
       lat: string | null;
+      delivery_instructions: string | null;
+      landmark_name: string | null;
+      location_type: string | null;
+      google_maps_url: string | null;
+      delivery_service_type: string | null;
+      preferred_contact_channel: string | null;
+      assigned_driver_id: string | null;
+      assigned_driver_name: string | null;
+      assigned_driver_phone: string | null;
+      assigned_driver_code: string | null;
+      assignment_status: string | null;
     }>(
       `SELECT d.id, d.delivery_number, d.status, o.id AS order_id, o.order_number,
               d.dropoff_address_text, d.recipient_name, d.recipient_phone,
               d.distance_km::text, d.eta_minutes, d.package_count, w.name AS warehouse_name,
               ST_X(d.dropoff_location::geometry)::text AS lng,
-              ST_Y(d.dropoff_location::geometry)::text AS lat
+              ST_Y(d.dropoff_location::geometry)::text AS lat,
+              d.delivery_instructions, d.landmark_name, d.location_type, d.google_maps_url,
+              o.delivery_service_type, o.preferred_contact_channel,
+              a.driver_id AS assigned_driver_id,
+              du.full_name AS assigned_driver_name,
+              du.phone_e164 AS assigned_driver_phone,
+              adr.driver_code AS assigned_driver_code,
+              a.status AS assignment_status
        FROM delivery.deliveries d
        JOIN sales.orders o ON o.id = d.order_id
        JOIN inventory.warehouses w ON w.id = d.origin_warehouse_id
+       LEFT JOIN LATERAL (
+         SELECT driver_id, status
+         FROM delivery.driver_assignments
+         WHERE delivery_id = d.id AND status IN ('offered','accepted')
+         ORDER BY CASE status WHEN 'accepted' THEN 0 ELSE 1 END, offered_at DESC
+         LIMIT 1
+       ) a ON true
+       LEFT JOIN delivery.drivers adr ON adr.id = a.driver_id
+       LEFT JOIN iam.users du ON du.id = adr.user_id
        WHERE d.id = $1`,
       [deliveryId],
     );
@@ -1406,6 +1848,12 @@ export class DeliveryService {
        WHERE di.delivery_id = $1`,
       [deliveryId],
     );
+    const mapsUrl =
+      r.google_maps_url ||
+      (r.lat != null && r.lng != null
+        ? `https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}`
+        : null);
+    const serviceType = r.delivery_service_type === 'express' ? 'Express' : 'Standard';
     return {
       id: r.id,
       deliveryNumber: r.delivery_number,
@@ -1421,6 +1869,22 @@ export class DeliveryService {
       warehouseName: r.warehouse_name,
       lng: r.lng != null ? Number(r.lng) : null,
       lat: r.lat != null ? Number(r.lat) : null,
+      deliveryInstructions: r.delivery_instructions,
+      landmarkName: r.landmark_name,
+      locationType: r.location_type,
+      googleMapsUrl: mapsUrl,
+      serviceType,
+      serviceTypeCode: r.delivery_service_type ?? 'standard',
+      preferredContactChannel: r.preferred_contact_channel,
+      assignedDriver: r.assigned_driver_id
+        ? {
+            id: r.assigned_driver_id,
+            name: r.assigned_driver_name,
+            phone: r.assigned_driver_phone,
+            code: r.assigned_driver_code,
+            assignmentStatus: r.assignment_status,
+          }
+        : null,
       items: items.map((i) => ({
         name: i.name_snapshot,
         sku: i.sku_snapshot,

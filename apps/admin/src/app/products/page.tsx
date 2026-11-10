@@ -35,6 +35,11 @@ export default function ProductsAdminPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editStatus, setEditStatus] = useState("active");
   const [editBulk, setEditBulk] = useState(false);
+  const [editReturnsAllowed, setEditReturnsAllowed] = useState(true);
+  const [editReturnDays, setEditReturnDays] = useState("7");
+  const [editReturnConditions, setEditReturnConditions] = useState("");
+  const [editReturnInstructions, setEditReturnInstructions] = useState("");
+  const [editReturnDescription, setEditReturnDescription] = useState("");
 
   // create product
   const [newName, setNewName] = useState("");
@@ -105,6 +110,11 @@ export default function ProductsAdminPage() {
     setEditDescription(p.description ?? "");
     setEditStatus(p.status);
     setEditBulk(p.bulkPurchasingEnabled);
+    setEditReturnsAllowed(p.returnsAllowed !== false);
+    setEditReturnDays(String(p.returnWindowDays ?? 7));
+    setEditReturnConditions(p.returnConditions ?? "");
+    setEditReturnInstructions(p.returnInstructions ?? "");
+    setEditReturnDescription(p.returnPolicyDescription ?? "");
     setVariantId(p.variants[0]?.id ?? "");
     const first = p.variants[0];
     if (first?.retailPrice != null) {
@@ -128,6 +138,13 @@ export default function ProductsAdminPage() {
         description: editDescription || undefined,
         status: editStatus,
         bulkPurchasingEnabled: editBulk,
+        returnsAllowed: editReturnsAllowed,
+        returnWindowDays: editReturnsAllowed
+          ? Number(editReturnDays) || 7
+          : null,
+        returnConditions: editReturnConditions || null,
+        returnInstructions: editReturnInstructions || null,
+        returnPolicyDescription: editReturnDescription || null,
       });
       setDetail(next as ProductDetail);
       setMessage("Product saved");
@@ -152,7 +169,11 @@ export default function ProductsAdminPage() {
         status: newStatus,
         bulkPurchasingEnabled: newBulk,
       });
-      setMessage("Product created");
+      setMessage(
+        created.retailNumber
+          ? `Product created · retail # ${created.retailNumber}`
+          : "Product created",
+      );
       setShowCreate(false);
       setNewName("");
       setNewSlug("");
@@ -167,17 +188,21 @@ export default function ProductsAdminPage() {
 
   async function createVariant(e: FormEvent) {
     e.preventDefault();
-    if (!token || !detail || !newSku.trim()) return;
+    if (!token || !detail || !newVariantName.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      await adminApi.createVariant(token, detail.id, {
-        sku: newSku.trim().toUpperCase(),
-        variantName: newVariantName || undefined,
+      const created = await adminApi.createVariant(token, detail.id, {
+        sku: newSku.trim() ? newSku.trim().toUpperCase() : undefined,
+        variantName: newVariantName.trim(),
       });
       setNewSku("");
       setNewVariantName("");
-      setMessage("Variant created");
+      setMessage(
+        created.sku
+          ? `Variant created · SKU ${created.sku}`
+          : "Variant created",
+      );
       await openProduct(detail.id);
       await refreshList(token);
     } catch (err) {
@@ -286,7 +311,7 @@ export default function ProductsAdminPage() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search name or slug…"
+                placeholder="Search name, slug, or retail #…"
                 className="w-full bg-[#17201c] px-3 py-2 text-sm outline-none"
               />
               <div className="flex flex-wrap gap-2">
@@ -326,6 +351,7 @@ export default function ProductsAdminPage() {
                     <span className="min-w-0">
                       <span className="block truncate">{p.name}</span>
                       <span className="mt-0.5 block text-[11px] text-[#8aa897]">
+                        {p.retailNumber ? `${p.retailNumber} · ` : ""}
                         {p.categoryName} · {p.variantCount} var · {p.status}
                       </span>
                     </span>
@@ -418,8 +444,17 @@ export default function ProductsAdminPage() {
                     <div>
                       <h2 className="text-xl">{detail.name}</h2>
                       <p className="text-xs text-[#8aa897]">
+                        {detail.retailNumber
+                          ? `Retail # ${detail.retailNumber} · `
+                          : ""}
                         {detail.categoryName} · {detail.slug}
                       </p>
+                      {detail.retailNumber && (
+                        <p className="mt-1 text-[11px] text-[#9dcdb4]">
+                          All variants share this retail number. SKUs are
+                          auto-built for stock tracking.
+                        </p>
+                      )}
                     </div>
                     <span className="text-[11px] uppercase tracking-wide text-[#8aa897]">
                       {detail.status}
@@ -463,6 +498,64 @@ export default function ProductsAdminPage() {
                       />
                       Bulk purchasing enabled
                     </label>
+                  </div>
+                  <div className="space-y-2 border border-[#24302a] p-3">
+                    <p className="text-xs text-[#8aa897]">Return policy</p>
+                    <label className="flex items-center gap-2 text-sm text-[#9eb0a6]">
+                      <input
+                        type="checkbox"
+                        checked={editReturnsAllowed}
+                        onChange={(e) =>
+                          setEditReturnsAllowed(e.target.checked)
+                        }
+                      />
+                      Returns allowed
+                    </label>
+                    {editReturnsAllowed ? (
+                      <>
+                        <label className="block text-xs text-[#9eb0a6]">
+                          Return window (days)
+                          <input
+                            type="number"
+                            min={0}
+                            value={editReturnDays}
+                            onChange={(e) => setEditReturnDays(e.target.value)}
+                            className="mt-1 w-full bg-[#17201c] px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <textarea
+                          value={editReturnDescription}
+                          onChange={(e) =>
+                            setEditReturnDescription(e.target.value)
+                          }
+                          rows={2}
+                          placeholder="Return policy description"
+                          className="w-full bg-[#17201c] px-3 py-2 text-sm"
+                        />
+                        <textarea
+                          value={editReturnConditions}
+                          onChange={(e) =>
+                            setEditReturnConditions(e.target.value)
+                          }
+                          rows={2}
+                          placeholder="Return conditions"
+                          className="w-full bg-[#17201c] px-3 py-2 text-sm"
+                        />
+                        <textarea
+                          value={editReturnInstructions}
+                          onChange={(e) =>
+                            setEditReturnInstructions(e.target.value)
+                          }
+                          rows={2}
+                          placeholder="Return instructions"
+                          className="w-full bg-[#17201c] px-3 py-2 text-sm"
+                        />
+                      </>
+                    ) : (
+                      <p className="text-xs text-amber-400">
+                        Customers will see: No Returns Available for This Item.
+                      </p>
+                    )}
                   </div>
                   <button
                     type="submit"
@@ -544,23 +637,24 @@ export default function ProductsAdminPage() {
 
                   <form
                     onSubmit={createVariant}
-                    className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+                    className="mt-3 grid gap-2 sm:grid-cols-[1.2fr_1fr_auto]"
                   >
-                    <input
-                      value={newSku}
-                      onChange={(e) => setNewSku(e.target.value)}
-                      placeholder="New SKU"
-                      className="bg-[#17201c] px-3 py-2 text-sm"
-                    />
                     <input
                       value={newVariantName}
                       onChange={(e) => setNewVariantName(e.target.value)}
-                      placeholder="Variant name"
+                      placeholder="Variant name (e.g. 28 / Navy)"
+                      className="bg-[#17201c] px-3 py-2 text-sm"
+                      required
+                    />
+                    <input
+                      value={newSku}
+                      onChange={(e) => setNewSku(e.target.value)}
+                      placeholder="SKU optional — auto if blank"
                       className="bg-[#17201c] px-3 py-2 text-sm"
                     />
                     <button
                       type="submit"
-                      disabled={busy || !newSku.trim()}
+                      disabled={busy || !newVariantName.trim()}
                       className="border border-[#24302a] px-3 py-2 text-sm disabled:opacity-60"
                     >
                       Add variant

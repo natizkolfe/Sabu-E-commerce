@@ -62,6 +62,8 @@ export class StudioService {
       reviewStatus: r.review_status,
       createdAt: r.created_at,
       jobId: r.job_id,
+      previewUrl: `/studio/images/${r.id}/preview`,
+      isAiPreview: true,
     }));
   }
 
@@ -151,7 +153,64 @@ export class StudioService {
       storageKey: r.storage_key,
       variantId: r.variant_id,
       isAiPreview: true,
+      previewUrl: `/studio/images/${r.id}/preview`,
     }));
+  }
+
+  /**
+   * Serves a visible AI preview card for mock (and future real) generations.
+   * Pending + approved images are viewable so admin can review; storefront
+   * only requests published ones via product payload.
+   */
+  async renderPreviewSvg(imageId: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      review_status: string;
+      published: boolean;
+      product_name: string;
+      model_name: string | null;
+    }>(
+      `SELECT gi.id, gi.review_status, gi.published, p.name AS product_name,
+              vm.display_name AS model_name
+       FROM studio.generated_images gi
+       JOIN catalog.products p ON p.id = gi.product_id
+       LEFT JOIN studio.generation_jobs j ON j.id = gi.job_id
+       LEFT JOIN studio.virtual_models vm ON vm.id = j.model_id
+       WHERE gi.id = $1`,
+      [imageId],
+    );
+    const img = rows[0];
+    if (!img) throw new NotFoundException('Generated image not found');
+    if (img.review_status === 'rejected') {
+      throw new NotFoundException('Generated image not available');
+    }
+
+    const title = escapeXml(img.product_name.slice(0, 42));
+    const model = escapeXml((img.model_name ?? 'Virtual model').slice(0, 36));
+    const badge =
+      img.review_status === 'pending' ? 'AI PREVIEW · PENDING' : 'AI PREVIEW';
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a4d3a"/>
+      <stop offset="55%" stop-color="#0f2a20"/>
+      <stop offset="100%" stop-color="#0b1f17"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="30%" cy="25%" r="55%">
+      <stop offset="0%" stop-color="#e8f5ee" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#e8f5ee" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="960" height="720" fill="url(#bg)"/>
+  <rect width="960" height="720" fill="url(#glow)"/>
+  <rect x="48" y="48" width="864" height="624" fill="none" stroke="#9dcdb4" stroke-opacity="0.35" stroke-width="2"/>
+  <text x="72" y="110" fill="#9dcdb4" font-family="Georgia, serif" font-size="22" letter-spacing="4">${badge}</text>
+  <text x="72" y="320" fill="#eef2ef" font-family="Georgia, serif" font-size="48">${title}</text>
+  <text x="72" y="380" fill="#b7c7be" font-family="Arial, sans-serif" font-size="24">Model: ${model}</text>
+  <text x="72" y="620" fill="#8aa897" font-family="Arial, sans-serif" font-size="18">Sabu Online Shopping · synthetic / licensed preview</text>
+</svg>`;
   }
 
   private async defaultProductImage(productId: string, variantId?: string) {
@@ -198,4 +257,13 @@ export class StudioService {
       [jobId],
     );
   }
+}
+
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }

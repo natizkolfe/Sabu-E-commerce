@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
+import { WhatsAppService } from './whatsapp.service';
 
 type OutboxRow = {
   id: string;
@@ -9,9 +10,8 @@ type OutboxRow = {
 };
 
 /**
- * Outbox drain: logs every notification attempt to notify.order_notification_logs.
- * Messaging providers are stubbed until BSP/Telegram/Viber credentials are configured.
- * Phone/SMS preference or missing consent → skipped_manual (admin must call).
+ * Outbox drain: delivers WhatsApp via Cloud API when configured,
+ * otherwise prepares a wa.me deep link (pending_click) and logs the attempt.
  */
 @Injectable()
 export class NotifyService implements OnModuleInit {
@@ -19,7 +19,10 @@ export class NotifyService implements OnModuleInit {
   private readonly logger = new Logger(NotifyService.name);
   private timer?: NodeJS.Timeout;
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
 
   onModuleInit() {
     this.timer = setInterval(() => {
@@ -58,8 +61,53 @@ export class NotifyService implements OnModuleInit {
     return { processed: rows.length };
   }
 
+  /** Manual / admin test send to a phone. */
+  async sendTestWhatsApp(phone: string, message?: string) {
+    const text =
+      message?.trim() ||
+      `Sabu Online Shopping test: WhatsApp delivery is working. (${new Date().toISOString()})`;
+    const result = await this.whatsapp.sendText(phone, text);
+    return {
+      phone: this.whatsapp.normalizePhone(phone),
+      ...result,
+      message: text,
+    };
+  }
+
+  buildOrderWhatsAppMessage(input: {
+    eventType: string;
+    orderNumber: string | null;
+    trackingUrl: string | null;
+    recipientName?: string | null;
+    grandTotal?: string | number | null;
+  }) {
+    return buildMessagePreview({
+      eventType: input.eventType,
+      orderNumber: input.orderNumber,
+      trackingUrl: input.trackingUrl,
+      channel: 'whatsapp',
+      requiresManual: false,
+      recipientName: input.recipientName ?? null,
+      grandTotal:
+        input.grandTotal == null ? null : String(input.grandTotal),
+    });
+  }
+
   private async handleEvent(row: OutboxRow) {
     const payload = row.payload ?? {};
+
+    // Driver offers are phone-call only — never WhatsApp drivers.
+    // Aggregate id is the assignment, not an order — skip order notification logs.
+    const driverOfferEvent =
+      row.event_type === 'delivery.offer_whatsapp' ||
+      row.event_type === 'delivery.offer_created';
+    if (driverOfferEvent) {
+      this.logger.log(
+        `[notify] ${row.event_type} skipped (phone-call driver contact)`,
+      );
+      return;
+    }
+
     const orderId =
       (typeof payload.orderId === 'string' && payload.orderId) ||
       (row.event_type.startsWith('order.') ||
@@ -70,7 +118,7 @@ export class NotifyService implements OnModuleInit {
 
     if (!orderId) {
       this.logger.log(
-        `[notify stub] ${row.event_type} (no order) → ${JSON.stringify(payload)}`,
+        `[notify] ${row.event_type} (no order) → ${JSON.stringify(payload)}`,
       );
       return;
     }
@@ -91,6 +139,10 @@ export class NotifyService implements OnModuleInit {
       typeof payload.trackingUrl === 'string' ? payload.trackingUrl : null;
     const orderNumber =
       typeof payload.orderNumber === 'string' ? payload.orderNumber : null;
+    const recipientName =
+      typeof payload.recipientName === 'string' ? payload.recipientName : null;
+    const grandTotal =
+      payload.grandTotal != null ? String(payload.grandTotal) : null;
 
     const preview = buildMessagePreview({
       eventType: row.event_type,
@@ -98,11 +150,15 @@ export class NotifyService implements OnModuleInit {
       trackingUrl,
       channel,
       requiresManual,
+      recipientName,
+      grandTotal,
     });
 
     let status: string;
     let lastError: string | null = null;
     let provider: string | null = null;
+    let deepLink: string | null = null;
+    let providerMessageId: string | null = null;
 
     if (requiresManual && messagingChannel(channel)) {
       status = 'skipped_manual';
@@ -111,8 +167,24 @@ export class NotifyService implements OnModuleInit {
     } else if (requiresManual) {
       status = 'skipped_manual';
       lastError = 'Manual phone contact required';
-    } else if (!providerConfigured(channel)) {
-      // Stub success so ops can see the intended send in admin logs
+    } else if (channel === 'whatsapp' && phone) {
+      const result = await this.whatsapp.sendText(phone, preview);
+      deepLink = result.deepLink ?? null;
+      providerMessageId = result.providerMessageId ?? null;
+      provider =
+        result.mode === 'cloud' ? 'whatsapp_cloud' : 'whatsapp_wa_me';
+      status =
+        result.status === 'sent'
+          ? 'sent'
+          : result.status === 'pending_click'
+            ? 'pending_click'
+            : 'failed';
+      lastError = result.error ?? null;
+      if (result.status === 'pending_click') {
+        lastError =
+          'WhatsApp Cloud API not configured — open wa.me deep link to deliver';
+      }
+    } else if (messagingChannel(channel)) {
       status = 'stubbed';
       provider = `${channel}_stub`;
       this.logger.log(
@@ -123,7 +195,6 @@ export class NotifyService implements OnModuleInit {
       provider = `${channel}_stub`;
     }
 
-    // Mark order for manual contact if messaging was skipped
     if (status === 'skipped_manual') {
       await this.db.query(
         `UPDATE sales.orders
@@ -141,7 +212,7 @@ export class NotifyService implements OnModuleInit {
        ) VALUES (
          $1::uuid, $2, $3, $4, $5,
          $6, $7, $8::jsonb, $9, 1,
-         $10::bigint, CASE WHEN $5 IN ('sent','delivered','stubbed') THEN now() ELSE NULL END
+         $10::bigint, CASE WHEN $5 IN ('sent','delivered','stubbed','pending_click') THEN now() ELSE NULL END
        )`,
       [
         orderId,
@@ -153,8 +224,9 @@ export class NotifyService implements OnModuleInit {
         preview,
         JSON.stringify({
           ...payload,
-          // never persist raw track token in logs long-term if present
           trackToken: undefined,
+          whatsappDeepLink: deepLink,
+          providerMessageId,
         }),
         lastError,
         row.id,
@@ -175,11 +247,6 @@ function messagingChannel(channel: string) {
   return ['whatsapp', 'telegram', 'viber'].includes(channel);
 }
 
-function providerConfigured(_channel: string) {
-  // Real BSP keys not wired yet — always stub
-  return false;
-}
-
 function maskPhone(phone: string | null) {
   if (!phone) return null;
   if (phone.length < 6) return '***';
@@ -192,26 +259,34 @@ function buildMessagePreview(opts: {
   trackingUrl: string | null;
   channel: string;
   requiresManual: boolean;
+  recipientName?: string | null;
+  grandTotal?: string | null;
 }) {
   const num = opts.orderNumber ?? 'your order';
+  const name = opts.recipientName ? ` ${opts.recipientName}` : '';
   if (opts.requiresManual) {
     return `Admin queue: contact customer about #${num} (preferred: ${opts.channel})`;
   }
-  const track = opts.trackingUrl ? ` Track: ${opts.trackingUrl}` : '';
+  const track = opts.trackingUrl ? `\nTrack: ${opts.trackingUrl}` : '';
+  const total =
+    opts.grandTotal != null ? `\nTotal: ETB ${opts.grandTotal}` : '';
   switch (opts.eventType) {
     case 'order.placed':
-      return `Order #${num} received successfully.${track}`;
+      return `Sabu Online Shopping: Hi${name}, order #${num} was received successfully.${total}${track}\nWe will confirm payment and delivery next.`;
     case 'payment.verified':
     case 'payment.succeeded':
-      return `Payment verified for order #${num}.${track}`;
+      return `Sabu Online Shopping: Payment verified for order #${num}.${track}\nEstimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays.`;
+    case 'delivery.offer_created':
+      return `Admin: call the driver and share the secure offer link for #${num}`;
     case 'delivery.offer_whatsapp':
-      return `Driver offer for delivery related to #${num}`;
+      // Legacy event — drivers are phone-call only now
+      return `Admin: call the driver for #${num} (WhatsApp to drivers disabled)`;
     case 'delivery.customer_whatsapp':
     case 'delivery.accepted':
-      return `Your order #${num} is out for delivery.${track}`;
+      return `Sabu Online Shopping: Your order #${num} is out for delivery. You can call your driver directly.${track}\nEstimated delivery time may vary depending on traffic conditions, weather, driver availability, and other unexpected delays.`;
     case 'delivery.completed':
-      return `Order #${num} was delivered. Thank you!`;
+      return `Sabu Online Shopping: Order #${num} was delivered. Thank you!`;
     default:
-      return `Update for order #${num} (${opts.eventType}).${track}`;
+      return `Sabu Online Shopping: Update for order #${num} (${opts.eventType}).${track}`;
   }
 }
