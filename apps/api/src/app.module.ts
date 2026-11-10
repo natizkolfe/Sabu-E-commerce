@@ -16,6 +16,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { StudioModule } from './modules/studio/studio.module';
 import { RootController } from './root.controller';
 
 @Module({
@@ -40,6 +41,7 @@ import { RootController } from './root.controller';
     NotifyModule,
     FinanceModule,
     AuditModule,
+    StudioModule,
   ],
   controllers: [RootController],
 })

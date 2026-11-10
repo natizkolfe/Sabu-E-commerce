@@ -1,0 +1,261 @@
+"use client";
+
+import Link from "next/link";
+import { FormEvent, Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { api, ApiError } from "../../../lib/api";
+import { formatEtb } from "../../../lib/money";
+
+function TrackInner() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const orderNumberQ = params.get("orderNumber") ?? "";
+  const tokenQ = params.get("token") ?? "";
+  const [orderNumber, setOrderNumber] = useState(orderNumberQ);
+  const [token, setToken] = useState(tokenQ);
+  const [phone, setPhone] = useState("+251");
+  const [mode, setMode] = useState<"token" | "phone">(
+    tokenQ ? "token" : "phone",
+  );
+  const [data, setData] = useState<Awaited<
+    ReturnType<typeof api.trackOrder>
+  > | null>(null);
+  const [delivery, setDelivery] = useState<Awaited<
+    ReturnType<typeof api.trackDelivery>
+  > | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!orderNumberQ || !tokenQ) return;
+    api
+      .trackOrder(orderNumberQ, tokenQ)
+      .then(async (order) => {
+        setData(order);
+        try {
+          const d = await api.trackDelivery(orderNumberQ, tokenQ);
+          setDelivery(d);
+        } catch {
+          setDelivery(null);
+        }
+      })
+      .catch((err: Error) =>
+        setError(err instanceof ApiError ? err.message : "Not found"),
+      );
+  }, [orderNumberQ, tokenQ]);
+
+  function onLookup(e: FormEvent) {
+    e.preventDefault();
+    if (mode === "token") {
+      router.push(
+        `/orders/track?orderNumber=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(token)}`,
+      );
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    api
+      .recoverTrack(orderNumber, phone)
+      .then((res) => {
+        sessionStorage.setItem(`sabu_track_${res.orderNumber}`, res.trackToken);
+        router.push(
+          `/orders/track?orderNumber=${encodeURIComponent(res.orderNumber)}&token=${encodeURIComponent(res.trackToken)}`,
+        );
+      })
+      .catch((err: Error) =>
+        setError(err instanceof ApiError ? err.message : "Lookup failed"),
+      )
+      .finally(() => setBusy(false));
+  }
+
+  if (!orderNumberQ || !tokenQ) {
+    return (
+      <main className="min-h-screen bg-sabu-paper pt-28 pb-16">
+        <form onSubmit={onLookup} className="mx-auto max-w-md space-y-4 px-6">
+          <h1 className="font-[family-name:var(--font-syne)] text-4xl text-sabu-ink">
+            Track order
+          </h1>
+          <p className="text-sabu-moss">
+            Use your order number with the secure track token from your
+            confirmation page, or verify with the phone used at checkout.
+          </p>
+          <div className="flex gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setMode("token")}
+              className={`px-3 py-1.5 ${mode === "token" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
+            >
+              Track token
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("phone")}
+              className={`px-3 py-1.5 ${mode === "phone" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
+            >
+              Phone verification
+            </button>
+          </div>
+          <input
+            required
+            value={orderNumber}
+            onChange={(e) => setOrderNumber(e.target.value)}
+            placeholder="SABU-2026-000001"
+            className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+          />
+          {mode === "token" ? (
+            <input
+              required
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="Track token"
+              className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+            />
+          ) : (
+            <input
+              required
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+2519..."
+              className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+            />
+          )}
+          {error && <p className="text-sm text-red-700">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full bg-sabu-leaf px-5 py-3 text-sm text-sabu-cream disabled:opacity-60"
+          >
+            {busy ? "Looking up…" : "Look up"}
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-sabu-paper px-6 pt-28">
+        <p className="text-red-700">{error}</p>
+        <Link href="/orders/track" className="mt-4 inline-block text-sabu-leaf">
+          Try again
+        </Link>
+      </main>
+    );
+  }
+
+  if (!data) {
+    return (
+      <main className="min-h-screen bg-sabu-paper px-6 pt-28">
+        <p className="text-sabu-moss">Loading order…</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-sabu-paper pt-28 pb-16">
+      <div className="mx-auto max-w-xl px-6">
+        <h1 className="font-[family-name:var(--font-syne)] text-4xl text-sabu-ink">
+          {data.orderNumber}
+        </h1>
+        <p className="mt-2 text-sabu-moss">
+          Status: {data.status} · Payment: {data.paymentStatus}
+        </p>
+        {data.recipientName && (
+          <p className="mt-1 text-sm text-sabu-ink">{data.recipientName}</p>
+        )}
+        {data.address && (
+          <p className="text-sm text-sabu-moss">{data.address}</p>
+        )}
+        {data.paymentMethodDisplayName && (
+          <p className="mt-1 text-sm text-sabu-moss">
+            Payment method: {data.paymentMethodDisplayName}
+          </p>
+        )}
+        <p className="mt-1 text-lg text-sabu-ink">
+          {formatEtb(data.grandTotal)} {data.currency}
+        </p>
+        {data.requiresManualContact && (
+          <p className="mt-3 border border-sabu-mist/60 px-3 py-2 text-xs text-sabu-moss">
+            You asked for phone updates. Our team will contact{" "}
+            {data.recipientPhoneMasked ?? "your number"} after review.
+          </p>
+        )}
+
+        {delivery && (
+          <div className="mt-6 border border-sabu-mist/60 px-4 py-4">
+            <p className="text-xs tracking-wide text-sabu-moss uppercase">
+              Delivery {delivery.deliveryNumber}
+            </p>
+            <p className="mt-1 text-sm text-sabu-ink">
+              Status: {delivery.status}
+              {delivery.etaMinutes != null
+                ? ` · ETA ~${delivery.etaMinutes} min`
+                : ""}
+            </p>
+            {delivery.driverName && (
+              <p className="mt-2 text-sm text-sabu-moss">
+                Driver: {delivery.driverName}
+                {delivery.driverPhone ? ` · ${delivery.driverPhone}` : ""}
+              </p>
+            )}
+            {!delivery.verified && (delivery.pin || delivery.qrToken) && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs text-sabu-moss">
+                  Show this to your driver for handoff verification
+                </p>
+                {delivery.pin && (
+                  <p className="font-[family-name:var(--font-syne)] text-3xl tracking-widest text-sabu-ink">
+                    PIN {delivery.pin}
+                  </p>
+                )}
+                {delivery.qrToken && (
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(delivery.qrToken)}`}
+                    alt="Delivery verification QR"
+                    width={160}
+                    height={160}
+                    className="border border-sabu-mist/60 bg-white p-2"
+                  />
+                )}
+              </div>
+            )}
+            {delivery.verified && (
+              <p className="mt-2 text-sm text-sabu-leaf">
+                Handoff verified
+                {delivery.status === "delivered" ? " · delivered" : ""}
+              </p>
+            )}
+          </div>
+        )}
+
+        <ul className="mt-8 divide-y divide-sabu-mist/50 border-t border-sabu-mist/50">
+          {data.items.map((item, i) => (
+            <li
+              key={i}
+              className="flex justify-between py-3 text-sm text-sabu-moss"
+            >
+              <span>
+                {item.name} × {item.quantity}
+              </span>
+              <span className="text-sabu-ink">{formatEtb(item.lineTotal)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </main>
+  );
+}
+
+export default function TrackPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-sabu-paper px-6 pt-28">
+          <p className="text-sabu-moss">Loading…</p>
+        </main>
+      }
+    >
+      <TrackInner />
+    </Suspense>
+  );
+}

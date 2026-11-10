@@ -40,10 +40,10 @@ export default function Home() {
               Browse catalog
             </Link>
             <Link
-              href="/login"
+              href="/catalog?bulk=1"
               className="border border-sabu-moss px-5 py-3 text-sm text-sabu-cream transition hover:border-sabu-mist"
             >
-              Sign in with phone
+              Bulk buy
             </Link>
           </div>
         </div>

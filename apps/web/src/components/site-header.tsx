@@ -3,15 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../context/auth-context";
+import { useCart } from "../context/cart-context";
 
 const links = [
   { href: "/catalog", label: "Catalog" },
+  { href: "/catalog?bulk=1", label: "Bulk buy" },
+  { href: "/orders/track", label: "Track" },
   { href: "/#special-orders", label: "Special orders" },
 ];
 
 export function SiteHeader() {
   const pathname = usePathname();
   const { user, ready } = useAuth();
+  const { itemCount } = useCart();
   const onHero = pathname === "/";
 
   return (
@@ -41,6 +45,16 @@ export function SiteHeader() {
               {link.label}
             </Link>
           ))}
+          <Link
+            href="/cart"
+            className={`transition ${
+              onHero
+                ? "text-sabu-mist hover:text-white"
+                : "text-sabu-moss hover:text-sabu-ink"
+            }`}
+          >
+            Cart{itemCount > 0 ? ` (${itemCount})` : ""}
+          </Link>
           {!ready ? null : user ? (
             <Link
               href="/account"

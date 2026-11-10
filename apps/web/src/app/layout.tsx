@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope, Syne } from "next/font/google";
 import { AuthProvider } from "../context/auth-context";
+import { CartProvider } from "../context/cart-context";
 import { SiteHeader } from "../components/site-header";
 import { SiteFooter } from "../components/site-footer";
 import "./globals.css";
@@ -33,9 +34,11 @@ export default function RootLayout({
         className={`${syne.variable} ${manrope.variable} min-h-screen antialiased`}
       >
         <AuthProvider>
-          <SiteHeader />
-          {children}
-          <SiteFooter />
+          <CartProvider>
+            <SiteHeader />
+            {children}
+            <SiteFooter />
+          </CartProvider>
         </AuthProvider>
       </body>
     </html>

@@ -44,15 +44,32 @@ export class AuthService {
   async requestOtp(dto: RequestOtpDto, ip?: string) {
     const phone = dto.phone;
     const purpose = dto.purpose ?? 'login';
+    const clientType = dto.clientType ?? 'web';
+    const isAdminClient = clientType === 'admin_web';
 
     let user = await this.findUserByPhone(phone);
 
     if (!user && purpose === 'login') {
-      user = await this.registerCustomer(phone, dto.fullName ?? 'Sabu Customer');
+      if (isAdminClient) {
+        // Dev/local admin bootstrap: create a staff ops admin instead of a retail customer.
+        user = await this.registerStaffAdmin(
+          phone,
+          dto.fullName ?? 'Sabu Admin',
+        );
+      } else {
+        user = await this.registerCustomer(
+          phone,
+          dto.fullName ?? 'Sabu Customer',
+        );
+      }
     }
 
     if (!user) {
       throw new BadRequestException('No account found for this phone');
+    }
+
+    if (isAdminClient) {
+      user = await this.ensureStaffAdminAccess(user, dto.fullName);
     }
 
     if (user.locked_until && user.locked_until > new Date()) {
@@ -345,6 +362,96 @@ export class AuthService {
 
       await client.query('COMMIT');
       return user;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async registerStaffAdmin(
+    phone: string,
+    fullName: string,
+  ): Promise<UserRow> {
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: users } = await client.query<UserRow>(
+        `INSERT INTO iam.users (user_type, phone_e164, full_name, status)
+         VALUES ('staff', $1, $2, 'pending_verification')
+         RETURNING id, user_type, full_name, phone_e164, email, status, locked_until`,
+        [phone, fullName],
+      );
+      const user = users[0];
+      await client.query(
+        `INSERT INTO iam.user_roles (user_id, role_id)
+         SELECT $1, id FROM iam.roles WHERE code = 'et_operations_admin'
+         ON CONFLICT DO NOTHING`,
+        [user.id],
+      );
+      await client.query('COMMIT');
+      this.logger.log(`Bootstrapped staff admin for ${phone}`);
+      return user;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Admin web login: promote retail accounts created by mistake and ensure
+   * et_operations_admin (includes delivery.dispatch).
+   */
+  private async ensureStaffAdminAccess(
+    user: UserRow,
+    fullName?: string,
+  ): Promise<UserRow> {
+    if (user.user_type === 'driver') {
+      throw new UnauthorizedException(
+        'Driver accounts cannot sign in to admin. Use a staff phone.',
+      );
+    }
+
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+
+      if (user.user_type !== 'staff') {
+        await client.query(
+          `UPDATE iam.users
+           SET user_type = 'staff',
+               full_name = COALESCE(NULLIF($2, ''), full_name),
+               updated_at = now()
+           WHERE id = $1`,
+          [user.id, fullName ?? null],
+        );
+      }
+
+      await client.query(
+        `INSERT INTO iam.user_roles (user_id, role_id)
+         SELECT $1, id FROM iam.roles WHERE code = 'et_operations_admin'
+         ON CONFLICT DO NOTHING`,
+        [user.id],
+      );
+
+      // Drop retail_customer so JWT permissions are ops-only, not mixed customer.
+      await client.query(
+        `DELETE FROM iam.user_roles ur
+         USING iam.roles r
+         WHERE ur.user_id = $1 AND ur.role_id = r.id AND r.code = 'retail_customer'`,
+        [user.id],
+      );
+
+      const { rows } = await client.query<UserRow>(
+        `SELECT id, user_type, full_name, phone_e164, email, status, locked_until
+         FROM iam.users WHERE id = $1`,
+        [user.id],
+      );
+      await client.query('COMMIT');
+      return rows[0] ?? user;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
