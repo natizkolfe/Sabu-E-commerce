@@ -2,6 +2,9 @@
 
 How to keep Sabu **online**, avoid **crashes**, and stay fast as your brother adds **many product photos** — and as real customers hit the storefront.
 
+**Go-live?** Use **§11 Go-live plan** (Phase A now → B launch day → C first weeks → D scale).  
+You do not need the full backlog before soft catalog entry.
+
 Companion doc (migrations / Option C): `docs/railway-migrations-cicd.md`
 
 ---
@@ -288,17 +291,80 @@ Use this as the engineering todo list. Mark items as you ship them.
 
 ---
 
-## 11. Suggested “next 3” (start here)
+## 11. Go-live plan (do this when you launch)
 
-1. **Healthchecks verified in Railway** — auto-restart dead API  
-2. **Upload resize + sharp concurrency limit** — stop OOM crashes when brother uploads many photos / uses studio  
-3. **Object storage plan (R2/S3)** — before `api-uploads` fills  
+You do **not** need every backlog item before brother starts entering products.  
+Use phases. Treat this section as the **launch plan**; sections 4–10 are the detail.
 
-When those three are done, Sabu is in a strong place for real catalog entry without constant firefighting.
+### Phase A — Now (brother enters real catalog, storefront soft / limited)
+
+**Goal:** data safe, Admin usable, no silly foot-guns.
+
+| # | Action | Done? |
+|---|--------|-------|
+| A1 | Keep PostGIS + `api-uploads` + migrate-on-deploy as-is | ✅ already live |
+| A2 | Confirm API healthcheck in Railway UI | [ ] |
+| A3 | Disable `AUTH_DEV_RETURN_OTP` before sharing Admin widely | [ ] |
+| A4 | Delete unused stock **Postgres** (not PostGIS) | [ ] |
+| A5 | Brother uses compressed photos (~1–2 MB); watch volume MB | [ ] |
+| A6 | After each API deploy: curl finance/health | [ ] |
+
+Soft rule for Phase A: **prefer stability over new features.**
+
+### Phase B — Storefront go-live day (public customers)
+
+**Goal:** customers can browse/buy without the API falling over.
+
+| # | Action | Done? |
+|---|--------|-------|
+| B1 | Healthchecks on Web + Admin too | [ ] |
+| B2 | Upload resize (card/thumb) + limit concurrent sharp/studio jobs | [ ] |
+| B3 | PostGIS backup enabled or first successful `pg_dump` | [ ] |
+| B4 | Smoke test: login → catalog → product image → checkout path | [ ] |
+| B5 | Know the rollback: previous Railway deploy + this doc’s cheat sheet | [ ] |
+| B6 | OTP/auth works for real phones (no dev OTP leak) | [ ] |
+
+**Go / no-go:** if B2–B4 are incomplete, launch with low traffic only and watch RAM/restarts closely.
+
+### Phase C — First weeks after go-live
+
+**Goal:** survive real photo volume and real traffic.
+
+| # | Action | Done? |
+|---|--------|-------|
+| C1 | If `api-uploads` nears full → grow volume **or** move to R2/S3 | [ ] |
+| C2 | CDN in front of media (or R2 public/CDN URL) | [ ] |
+| C3 | Error alerts (Railway + optional Sentry) | [ ] |
+| C4 | Staging env for migrations before production | [ ] |
+| C5 | If traffic grows → 2 API replicas + stronger DB plan | [ ] |
+| C6 | Heavy studio work → separate worker (optional) | [ ] |
+
+### Phase D — Scale (only when metrics say so)
+
+Follow **§8 Scaling ladder**. Don’t buy replicas “just in case” while the catalog is still being filled.
+
+### One-page launch order
+
+```
+Phase A (now)     → safe catalog entry
+Phase B (launch)  → public storefront
+Phase C (weeks)   → photos + monitoring + staging
+Phase D (later)   → replicas / workers / bigger DB
+```
 
 ---
 
-## 12. Related docs
+## 12. Suggested “next 3” before / at go-live
+
+1. **Healthchecks verified in Railway** — auto-restart dead API  
+2. **Upload resize + sharp concurrency limit** — stop OOM when many photos / studio run  
+3. **Object storage plan (R2/S3)** — before `api-uploads` fills after go-live  
+
+Ship 1–2 in Phase B; keep 3 ready as Phase C trigger when volume usage climbs.
+
+---
+
+## 13. Related docs
 
 - Migrations & CI/CD (Option C): `docs/railway-migrations-cicd.md`
 - Marketplace roadmap: `docs/ROADMAP-marketplace.md`
@@ -307,7 +373,7 @@ When those three are done, Sabu is in a strong place for real catalog entry with
 
 ---
 
-## 13. Learning checklist
+## 14. Learning checklist
 
 - [ ] I can explain why PostGIS volume ≠ picture storage
 - [ ] I know why `MEDIA_ROOT` must point at `api-uploads`
@@ -316,3 +382,4 @@ When those three are done, Sabu is in a strong place for real catalog entry with
 - [ ] I know when to move from volume → R2/S3
 - [ ] I will not leave `AUTH_DEV_RETURN_OTP` on for real users
 - [ ] I know unused Postgres should be removed to free resources
+- [ ] I know Phase A vs B vs C of the go-live plan
