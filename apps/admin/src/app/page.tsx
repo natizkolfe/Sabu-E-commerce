@@ -20,12 +20,14 @@ const nav = [
   { href: "/vendors", label: "Vendors" },
   { href: "/commissions", label: "Commissions" },
   { href: "/special-orders", label: "Special Orders" },
+  { href: "/receipts", label: "Receipts" },
   { href: "/partners", label: "Partners" },
   { href: "/drivers", label: "Drivers" },
   { href: "/deliveries", label: "Delivery dispatch" },
   { href: "/delivery-settings", label: "Delivery pricing" },
   { href: "/payments", label: "Payment verification" },
-  { href: "/studio", label: "AI Image Studio" },
+  { href: "/studio", label: "Enhance photos" },
+  { href: "/studio/try-on", label: "Try-on (optional)" },
 ];
 
 export default function AdminHome() {

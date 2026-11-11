@@ -271,6 +271,7 @@ export const api = {
         wholesaleFromPrice: number | null;
         currency: string;
         imageKey: string | null;
+        imageUrl?: string | null;
         variantCount: number;
         inStock?: boolean;
       }>;

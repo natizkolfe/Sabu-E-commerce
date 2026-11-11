@@ -285,6 +285,9 @@ export class CatalogService {
         wholesaleFromPrice: r.wholesale_from ? Number(r.wholesale_from) : null,
         currency: r.currency ?? 'ETB',
         imageKey: r.image_key,
+        imageUrl: r.image_key
+          ? `/media/file?key=${encodeURIComponent(r.image_key)}`
+          : null,
         variantCount: Number(r.variant_count),
         inStock: r.in_stock,
         createdAt: r.created_at,
@@ -511,6 +514,9 @@ export class CatalogService {
       [product.id],
     );
 
+    const images = await this.listProductImages(product.id);
+    const primaryImage = images.find((i) => i.isPrimary) ?? images[0] ?? null;
+
     return {
       id: product.id,
       slug: product.slug,
@@ -530,12 +536,17 @@ export class CatalogService {
         product.returns_allowed === false
           ? 'No Returns Available for This Item.'
           : `Returns within ${product.return_window_days ?? 7} day(s)`,
+      imageKey: primaryImage?.storageKey ?? null,
+      imageUrl: primaryImage?.url ?? null,
+      images,
       aiPreviews: aiPreviews.map((img) => ({
         id: img.id,
         storageKey: img.storage_key,
         variantId: img.variant_id,
         isAiPreview: true as const,
-        previewUrl: `/studio/images/${img.id}/preview`,
+        previewUrl: img.storage_key.includes('/enhanced/')
+          ? `/media/file?key=${encodeURIComponent(img.storage_key)}`
+          : `/studio/images/${img.id}/preview`,
       })),
       variants: variants.map((v) => ({
         id: v.id,

@@ -5,6 +5,7 @@ import {
   Header,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import {
@@ -22,8 +23,9 @@ import type { AuthUser } from '../iam/auth.types';
 import { StudioService } from './studio.service';
 
 class GenerateDto {
+  @IsOptional()
   @IsUUID()
-  productId!: string;
+  productId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -42,17 +44,41 @@ class GenerateDto {
   jobType?: 'try_on' | 'product_transform';
 
   @IsOptional()
-  @IsIn(['studio_packshot', 'ghost_mannequin', 'background_cleanup'])
+  @IsIn([
+    'studio_packshot',
+    'ghost_mannequin',
+    'background_cleanup',
+    'white_background_ecommerce',
+  ])
   transformPreset?:
     | 'studio_packshot'
     | 'ghost_mannequin'
-    | 'background_cleanup';
+    | 'background_cleanup'
+    | 'white_background_ecommerce';
+
+  /** Optional AI/local cutout. Default false = white canvas only (keeps photo). */
+  @IsOptional()
+  @IsBoolean()
+  removeBackground?: boolean;
 }
 
 class ReviewDto {
   @IsOptional()
   @IsBoolean()
   publish?: boolean;
+}
+
+class AttachDto {
+  @IsUUID()
+  productId!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  setPrimary?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  includeOriginal?: boolean;
 }
 
 @Controller('studio')
@@ -99,8 +125,41 @@ export class StudioController {
 
   @Get('reviews/pending')
   @RequirePermissions('studio.publish')
-  pending() {
-    return this.studio.listPendingReviews();
+  pending(
+    @Query('productId') productId?: string,
+    @Query('stagedOnly') stagedOnly?: string,
+    @Query('jobType') jobType?: 'try_on' | 'product_transform',
+  ) {
+    return this.studio.listPendingReviews({
+      productId: productId || undefined,
+      stagedOnly: stagedOnly === '1' || stagedOnly === 'true',
+      jobType: jobType || undefined,
+    });
+  }
+
+  @Get('library')
+  @RequirePermissions('studio.publish')
+  library() {
+    return this.studio.listEnhanceLibrary();
+  }
+
+  @Post('images/:id/attach')
+  @RequirePermissions('studio.publish')
+  attach(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AttachDto,
+  ) {
+    return this.studio.attachToProduct(user, id, dto.productId, {
+      setPrimary: dto.setPrimary,
+      includeOriginal: dto.includeOriginal,
+    });
+  }
+
+  @Post('images/:id/save')
+  @RequirePermissions('studio.publish')
+  save(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.studio.saveToLibrary(user, id);
   }
 
   @Post('images/:id/approve')

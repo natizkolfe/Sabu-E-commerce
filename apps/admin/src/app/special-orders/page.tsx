@@ -67,10 +67,21 @@ export default function SpecialOrdersPage() {
         <Link href="/" className="text-sm text-[#8aa897]">
           ← Admin
         </Link>
-        <h1 className="mt-2 text-3xl tracking-tight">Special Orders</h1>
-        <p className="mt-1 text-sm text-[#9eb0a6]">
-          International procurement requests (USA / China / Dubai).
-        </p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-3xl tracking-tight">Special Orders</h1>
+            <p className="mt-1 text-sm text-[#9eb0a6]">
+              International procurement requests (USA / China / Dubai). Paid
+              demos link to customer receipts.
+            </p>
+          </div>
+          <Link
+            href="/receipts"
+            className="border border-[#24302a] px-3 py-1.5 text-xs text-[#9dcdb4]"
+          >
+            View receipts →
+          </Link>
+        </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
           <span className="text-[#8aa897]">Assign to partner:</span>

@@ -920,21 +920,73 @@ export const adminApi = {
     >("/studio/models", { token });
   },
 
-  studioPending(token: string) {
+  studioPending(
+    token: string,
+    opts?: {
+      productId?: string;
+      stagedOnly?: boolean;
+      jobType?: "try_on" | "product_transform";
+    },
+  ) {
+    const params = new URLSearchParams();
+    if (opts?.productId) params.set("productId", opts.productId);
+    if (opts?.stagedOnly) params.set("stagedOnly", "1");
+    if (opts?.jobType) params.set("jobType", opts.jobType);
+    const qs = params.toString() ? `?${params}` : "";
     return request<
       Array<{
         id: string;
         storageKey: string;
+        productId?: string | null;
         productName: string;
-        productSlug: string;
+        productSlug?: string | null;
+        staged?: boolean;
+        reviewStatus?: string;
         jobType?: string;
         transformPreset?: string | null;
         sourceImageKey?: string;
         sourceUrl?: string | null;
         previewUrl?: string;
+        resultUrl?: string;
         modelName?: string | null;
+        provider?: string;
       }>
-    >("/studio/reviews/pending", { token });
+    >(`/studio/reviews/pending${qs}`, { token });
+  },
+
+  studioLibrary(token: string) {
+    return request<
+      Array<{
+        id: string;
+        storageKey: string;
+        productId?: string | null;
+        productName: string;
+        staged?: boolean;
+        reviewStatus?: string;
+        jobType?: string;
+        transformPreset?: string | null;
+        sourceImageKey?: string;
+        sourceUrl?: string | null;
+        previewUrl?: string;
+        resultUrl?: string;
+        provider?: string;
+        demoSeed?: boolean;
+        label?: string | null;
+        createdAt?: string;
+      }>
+    >("/studio/library", { token });
+  },
+
+  studioSaveToLibrary(token: string, id: string) {
+    return request<{
+      ok: boolean;
+      savedToLibrary?: boolean;
+      needsProductAssign?: boolean;
+    }>(`/studio/images/${id}/save`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
   },
 
   studioTransformPresets(token: string) {
@@ -946,7 +998,7 @@ export const adminApi = {
   studioGenerate(
     token: string,
     body: {
-      productId: string;
+      productId?: string;
       modelId?: string;
       variantId?: string;
       sourceImageKey?: string;
@@ -954,10 +1006,41 @@ export const adminApi = {
       transformPreset?:
         | "studio_packshot"
         | "ghost_mannequin"
-        | "background_cleanup";
+        | "background_cleanup"
+        | "white_background_ecommerce";
+      /** Optional cutout. Default false = white canvas only. */
+      removeBackground?: boolean;
     },
   ) {
-    return request("/studio/generate", {
+    return request<{
+      jobId: string;
+      status: string;
+      jobType: string;
+      provider?: string;
+      removeBackground?: boolean;
+      staged?: boolean;
+    }>("/studio/generate", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  studioAttach(
+    token: string,
+    id: string,
+    body: {
+      productId: string;
+      setPrimary?: boolean;
+      includeOriginal?: boolean;
+    },
+  ) {
+    return request<{
+      ok: boolean;
+      productId: string;
+      catalogImageId: string;
+      originalImageId?: string | null;
+    }>(`/studio/images/${id}/attach`, {
       method: "POST",
       token,
       body: JSON.stringify(body),
@@ -965,7 +1048,12 @@ export const adminApi = {
   },
 
   studioApprove(token: string, id: string) {
-    return request(`/studio/images/${id}/approve`, {
+    return request<{
+      ok: boolean;
+      reviewStatus: string;
+      catalogImageId?: string | null;
+      needsProductAssign?: boolean;
+    }>(`/studio/images/${id}/approve`, {
       method: "POST",
       token,
       body: JSON.stringify({ publish: true }),
@@ -1415,5 +1503,61 @@ export const adminApi = {
       token,
       body: JSON.stringify({ supplierId }),
     });
+  },
+
+  listReceipts(token: string) {
+    return request<
+      Array<{
+        id: string;
+        receiptNumber: string;
+        orderId: string;
+        orderNumber: string;
+        orderType: string;
+        specialOrderRequestId?: string | null;
+        specialOrderNumber?: string | null;
+        customerName: string;
+        customerPhone: string | null;
+        paymentMethodCode: string | null;
+        paymentStatus: string;
+        subtotal: number;
+        deliveryFee: number;
+        taxTotal: number;
+        discountTotal: number;
+        grandTotal: number;
+        currency: string;
+        createdAt: string;
+      }>
+    >("/finance/admin/receipts", { token });
+  },
+
+  getReceipt(token: string, idOrNumber: string) {
+    return request<{
+      id: string;
+      receiptNumber: string;
+      orderId: string;
+      orderNumber: string;
+      orderType: string;
+      specialOrderRequestId?: string | null;
+      specialOrderNumber?: string | null;
+      productName?: string | null;
+      customerName: string;
+      customerPhone: string | null;
+      paymentMethodCode: string | null;
+      paymentStatus: string;
+      subtotal: number;
+      deliveryFee: number;
+      taxTotal: number;
+      discountTotal: number;
+      grandTotal: number;
+      currency: string;
+      qrPayload?: string | null;
+      lineItems: Array<{
+        name: string;
+        qty: number;
+        unitPrice: number;
+        lineTotal: number;
+      }>;
+      createdAt: string;
+    }>(`/finance/admin/receipts/${encodeURIComponent(idOrNumber)}`, { token });
   },
 };

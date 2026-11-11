@@ -61,6 +61,10 @@ export default function ProductsAdminPage() {
   const [newBrandId, setNewBrandId] = useState("");
   const [newStatus, setNewStatus] = useState("draft");
   const [newBulk, setNewBulk] = useState(false);
+  const [enhanceLibrary, setEnhanceLibrary] = useState<
+    Awaited<ReturnType<typeof adminApi.studioLibrary>>
+  >([]);
+  const [newLibraryImageIds, setNewLibraryImageIds] = useState<string[]>([]);
 
   // variant create
   const [newSku, setNewSku] = useState("");
@@ -78,6 +82,10 @@ export default function ProductsAdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [removeBackground, setRemoveBackground] = useState(false);
+  const [pendingEnhance, setPendingEnhance] = useState<
+    Awaited<ReturnType<typeof adminApi.studioPending>>
+  >([]);
 
   const selectedVariant = useMemo(
     () => detail?.variants.find((v) => v.id === variantId) ?? null,
@@ -146,6 +154,7 @@ export default function ProductsAdminPage() {
     } else {
       setUnitPrice("");
     }
+    if (token) await refreshPendingEnhance(id, token);
   }
 
   async function saveProduct(e: FormEvent) {
@@ -199,14 +208,32 @@ export default function ProductsAdminPage() {
         status: newStatus,
         bulkPurchasingEnabled: newBulk,
       });
+      let attached = 0;
+      for (const [i, imageId] of newLibraryImageIds.entries()) {
+        try {
+          await adminApi.studioAttach(token, imageId, {
+            productId: created.id,
+            setPrimary: i === 0,
+            includeOriginal: true,
+          });
+          attached += 1;
+        } catch {
+          // continue attaching remaining
+        }
+      }
       setMessage(
         created.retailNumber
-          ? `Product created · retail # ${created.retailNumber}`
-          : "Product created",
+          ? `Product created · retail # ${created.retailNumber}${
+              attached ? ` · ${attached} enhanced image(s) attached` : ""
+            }`
+          : attached
+            ? `Product created · ${attached} enhanced image(s) attached`
+            : "Product created",
       );
       setShowCreate(false);
       setNewName("");
       setNewSlug("");
+      setNewLibraryImageIds([]);
       await refreshList(token);
       await openProduct(created.id);
     } catch (err) {
@@ -296,6 +323,38 @@ export default function ProductsAdminPage() {
     );
   }
 
+  async function refreshPendingEnhance(productId: string, accessToken: string) {
+    try {
+      const [forProduct, staged, lib] = await Promise.all([
+        adminApi.studioPending(accessToken, {
+          productId,
+          jobType: "product_transform",
+        }),
+        adminApi.studioPending(accessToken, {
+          stagedOnly: true,
+          jobType: "product_transform",
+        }),
+        adminApi.studioLibrary(accessToken).catch(() => []),
+      ]);
+      const seen = new Set(forProduct.map((j) => j.id));
+      setPendingEnhance([
+        ...forProduct,
+        ...staged.filter((j) => !seen.has(j.id)),
+      ]);
+      setEnhanceLibrary(lib);
+    } catch {
+      setPendingEnhance([]);
+    }
+  }
+
+  async function loadEnhanceLibrary(accessToken: string) {
+    try {
+      setEnhanceLibrary(await adminApi.studioLibrary(accessToken));
+    } catch {
+      setEnhanceLibrary([]);
+    }
+  }
+
   async function uploadProductImage(file: File) {
     if (!token || !detail) return;
     setBusy(true);
@@ -312,13 +371,70 @@ export default function ProductsAdminPage() {
         isPrimary: !(detail.images?.length),
         source: "upload",
       });
-      setMessage("Image uploaded");
+      setMessage("Image uploaded — use Enhance with AI for white background");
       await openProduct(detail.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Upload failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function enhanceImage(storageKey: string) {
+    if (!token || !detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await adminApi.studioGenerate(token, {
+        productId: detail.id,
+        jobType: "product_transform",
+        transformPreset: "white_background_ecommerce",
+        sourceImageKey: storageKey,
+        removeBackground,
+      });
+      setMessage(
+        removeBackground
+          ? `Enhanced with bg removal (${res.provider ?? "ai"}) — review below`
+          : `White canvas ready (${res.provider ?? "canvas"}) — review below`,
+      );
+      await refreshPendingEnhance(detail.id, token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Enhance failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveEnhance(id: string) {
+    if (!token || !detail) return;
+    setBusy(true);
+    try {
+      const job = pendingEnhance.find((j) => j.id === id);
+      if (job?.staged || !job?.productId) {
+        await adminApi.studioAttach(token, id, {
+          productId: detail.id,
+          setPrimary: true,
+          includeOriginal: true,
+        });
+        setMessage("Staged enhance assigned to this product as primary");
+      } else {
+        await adminApi.studioApprove(token, id);
+        setMessage("Enhanced image approved and set as primary");
+      }
+      await refreshPendingEnhance(detail.id, token);
+      await openProduct(detail.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Approve failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rejectEnhance(id: string) {
+    if (!token || !detail) return;
+    await adminApi.studioReject(token, id);
+    setMessage("Kept original — enhanced draft discarded");
+    await refreshPendingEnhance(detail.id, token);
   }
 
   if (!token) {
@@ -352,6 +468,8 @@ export default function ProductsAdminPage() {
               setShowCreate(true);
               setDetail(null);
               setSelectedId(null);
+              setNewLibraryImageIds([]);
+              if (token) void loadEnhanceLibrary(token);
             }}
             className="bg-[#2f6b4f] px-4 py-2 text-sm"
           >
@@ -492,6 +610,76 @@ export default function ProductsAdminPage() {
                     Bulk purchasing
                   </label>
                 </div>
+
+                <div className="border border-[#24302a] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm text-[#9dcdb4]">
+                        Enhanced photos from library
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-[#8aa897]">
+                        Optional — pick clean images you already enhanced.
+                        First selected becomes primary.
+                      </p>
+                    </div>
+                    <Link
+                      href="/studio"
+                      className="text-[11px] text-[#9dcdb4] underline"
+                    >
+                      Enhance more →
+                    </Link>
+                  </div>
+                  {enhanceLibrary.length === 0 ? (
+                    <p className="mt-3 text-xs text-[#8aa897]">
+                      No saved enhances yet. Enhance phone photos first, then
+                      create the product.
+                    </p>
+                  ) : (
+                    <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {enhanceLibrary.map((img) => {
+                        const selected = newLibraryImageIds.includes(img.id);
+                        const src = `${API_URL}${
+                          img.resultUrl ??
+                          img.previewUrl ??
+                          `/studio/images/${img.id}/preview`
+                        }`;
+                        return (
+                          <li key={img.id}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNewLibraryImageIds((prev) =>
+                                  selected
+                                    ? prev.filter((id) => id !== img.id)
+                                    : [...prev, img.id],
+                                )
+                              }
+                              className={`w-full overflow-hidden rounded-md border ${
+                                selected
+                                  ? "border-[#2f6b4f] ring-1 ring-[#2f6b4f]"
+                                  : "border-[#24302a]"
+                              }`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={src}
+                                alt="Enhanced"
+                                className="aspect-[3/4] w-full object-cover"
+                              />
+                              <span className="block truncate px-1 py-1 text-[9px] text-[#8aa897]">
+                                {selected
+                                  ? `#${newLibraryImageIds.indexOf(img.id) + 1} · `
+                                  : ""}
+                                {img.label ?? img.productName ?? "Select"}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
                 <button
                   type="submit"
                   disabled={busy}
@@ -680,36 +868,97 @@ export default function ProductsAdminPage() {
                 <div className="border-t border-[#24302a] pt-4">
                   <h3 className="text-sm text-[#8aa897]">Product images</h3>
                   <p className="mt-1 text-[11px] text-[#8aa897]">
-                    Upload phone photos here, then enhance them in AI Studio.
+                    Prefer{" "}
+                    <Link href="/studio" className="text-[#9dcdb4] underline">
+                      Enhance photos
+                    </Link>{" "}
+                    for white-canvas standards, then assign here. Try-on is
+                    optional and separate.
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {(detail.images ?? []).map((img) => (
-                      <div
-                        key={img.id}
-                        className="relative w-20 overflow-hidden rounded-md border border-[#24302a]"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={
-                            img.url?.startsWith("http")
-                              ? img.url
-                              : `${API_URL}${img.url}`
-                          }
-                          alt={img.altText ?? ""}
-                          className="aspect-[3/4] w-full object-cover"
-                        />
-                        <div className="flex flex-col gap-0.5 p-1">
-                          {img.isPrimary ? (
-                            <span className="text-[9px] text-[#9dcdb4]">
-                              Primary
+                  <div className="mt-2 flex items-center justify-between gap-2 rounded border border-[#24302a] px-2 py-1.5">
+                    <span className="text-[11px] text-[#8aa897]">
+                      Remove background when enhancing
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={removeBackground}
+                      onClick={() => setRemoveBackground((v) => !v)}
+                      className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${
+                        removeBackground ? "bg-[#2f6b4f]" : "bg-[#2a3530]"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                          removeBackground ? "translate-x-4" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    {(detail.images ?? []).map((img) => {
+                      const src = img.url?.startsWith("http")
+                        ? img.url
+                        : `${API_URL}${img.url}`;
+                      const isOriginal =
+                        !img.source ||
+                        img.source === "upload" ||
+                        img.source === "seed";
+                      return (
+                        <div
+                          key={img.id}
+                          className="w-28 overflow-hidden rounded-md border border-[#24302a]"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt={img.altText ?? ""}
+                            className="aspect-[3/4] w-full object-cover"
+                          />
+                          <div className="space-y-0.5 p-1.5">
+                            <span className="block text-[9px] uppercase tracking-wide text-[#8aa897]">
+                              {img.isPrimary ? "Primary · " : ""}
+                              {img.source === "ai_enhance"
+                                ? "AI enhanced"
+                                : isOriginal
+                                  ? "Original"
+                                  : img.source}
                             </span>
-                          ) : (
+                            {isOriginal && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                className="w-full bg-[#2f6b4f] px-1 py-1 text-[10px] disabled:opacity-50"
+                                onClick={() =>
+                                  void enhanceImage(img.storageKey)
+                                }
+                              >
+                                Enhance with AI
+                              </button>
+                            )}
+                            {!img.isPrimary && (
+                              <button
+                                type="button"
+                                className="w-full text-[9px] text-[#8aa897]"
+                                onClick={async () => {
+                                  if (!token) return;
+                                  await adminApi.setPrimaryProductImage(
+                                    token,
+                                    detail.id,
+                                    img.id,
+                                  );
+                                  await openProduct(detail.id);
+                                }}
+                              >
+                                Make primary
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="text-[9px] text-[#8aa897]"
+                              className="w-full text-[9px] text-red-400"
                               onClick={async () => {
                                 if (!token) return;
-                                await adminApi.setPrimaryProductImage(
+                                await adminApi.deleteProductImage(
                                   token,
                                   detail.id,
                                   img.id,
@@ -717,33 +966,19 @@ export default function ProductsAdminPage() {
                                 await openProduct(detail.id);
                               }}
                             >
-                              Make primary
+                              Remove
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            className="text-[9px] text-red-400"
-                            onClick={async () => {
-                              if (!token) return;
-                              await adminApi.deleteProductImage(
-                                token,
-                                detail.id,
-                                img.id,
-                              );
-                              await openProduct(detail.id);
-                            }}
-                          >
-                            Remove
-                          </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <label className="mt-3 inline-block cursor-pointer border border-[#24302a] px-3 py-2 text-xs">
-                    Upload image
+                    Upload phone photo
                     <input
                       type="file"
                       accept="image/*"
+                      capture="environment"
                       className="hidden"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
@@ -752,6 +987,100 @@ export default function ProductsAdminPage() {
                       }}
                     />
                   </label>
+
+                  {pendingEnhance.length > 0 && (
+                    <div className="mt-4 space-y-4 border border-[#24302a] p-3">
+                      <p className="text-xs text-[#9dcdb4]">
+                        Pending AI enhance — approve to publish, or assign a
+                        staged enhance to this product
+                      </p>
+                      {pendingEnhance.map((job) => {
+                        const staged = job.staged || !job.productId;
+                        const originalSrc = job.sourceUrl
+                          ? `${API_URL}${job.sourceUrl}`
+                          : null;
+                        const resultSrc = `${API_URL}${
+                          job.resultUrl ??
+                          job.previewUrl ??
+                          `/studio/images/${job.id}/preview`
+                        }`;
+                        return (
+                          <div key={job.id}>
+                            <p className="text-[11px] text-[#8aa897]">
+                              {(job.transformPreset ?? "enhance").replace(
+                                /_/g,
+                                " ",
+                              )}{" "}
+                              · {job.provider ?? "ai"}
+                              {staged ? " · staged (unassigned)" : ""}
+                            </p>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              <div>
+                                <p className="mb-1 text-[10px] uppercase text-[#8aa897]">
+                                  Original
+                                </p>
+                                <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-lg border border-[#24302a] bg-[#17201c]">
+                                  {originalSrc ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={originalSrc}
+                                      alt="Original"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <span className="px-2 text-center text-[10px] text-[#8aa897]">
+                                      No source preview
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="mb-1 text-[10px] uppercase text-[#8aa897]">
+                                  AI enhanced
+                                </p>
+                                <div className="overflow-hidden rounded-lg border border-[#24302a]">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={resultSrc}
+                                    alt="Enhanced"
+                                    className="aspect-[3/4] w-full object-cover"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void approveEnhance(job.id)}
+                                className="bg-[#2f6b4f] px-3 py-1.5 text-xs disabled:opacity-50"
+                              >
+                                {staged ? "Assign to this product" : "Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy || !job.sourceImageKey}
+                                onClick={() =>
+                                  job.sourceImageKey &&
+                                  void enhanceImage(job.sourceImageKey)
+                                }
+                                className="border border-[#24302a] px-3 py-1.5 text-xs disabled:opacity-50"
+                              >
+                                Regenerate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void rejectEnhance(job.id)}
+                                className="border border-[#24302a] px-3 py-1.5 text-xs"
+                              >
+                                Keep original
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="border-t border-[#24302a] pt-4">

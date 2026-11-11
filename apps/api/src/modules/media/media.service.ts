@@ -97,4 +97,41 @@ export class MediaService {
       'application/octet-stream';
     return { abs, mime, storageKey: safe };
   }
+
+  async readBuffer(storageKey: string) {
+    const resolved = await this.resolve(storageKey);
+    const buffer = await fs.readFile(resolved.abs);
+    return { ...resolved, buffer };
+  }
+
+  async saveBuffer(
+    buffer: Buffer,
+    opts: { folder: string; mime: string; ext?: string },
+  ) {
+    await this.ensureRoot();
+    const mime = opts.mime.toLowerCase();
+    const ext = opts.ext ?? ALLOWED_MIME[mime];
+    if (!ext) {
+      throw new BadRequestException(`Unsupported image type ${mime}`);
+    }
+    if (!buffer.length) throw new BadRequestException('Empty image payload');
+    if (buffer.length > 12 * 1024 * 1024) {
+      throw new BadRequestException('Image too large (max 12MB)');
+    }
+    const folder = opts.folder
+      .replace(/[^a-zA-Z0-9/_-]/g, '')
+      .replace(/^\/+|\/+$/g, '');
+    const hash = createHash('sha1').update(buffer).digest('hex').slice(0, 10);
+    const id = randomUUID().slice(0, 8);
+    const storageKey = `${folder}/${id}-${hash}.${ext}`;
+    const abs = path.join(this.root, ...storageKey.split('/'));
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    await fs.writeFile(abs, buffer);
+    return {
+      storageKey,
+      mime,
+      size: buffer.length,
+      url: `/media/file?key=${encodeURIComponent(storageKey)}`,
+    };
+  }
 }

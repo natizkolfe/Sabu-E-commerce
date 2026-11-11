@@ -422,6 +422,7 @@ function CatalogInner() {
                   compareAtPrice={p.compareAtPrice}
                   wholesaleFromPrice={p.wholesaleFromPrice}
                   bulkPurchasingEnabled={p.bulkPurchasingEnabled}
+                  imageUrl={p.imageUrl ?? null}
                   index={i}
                 />
               ))}

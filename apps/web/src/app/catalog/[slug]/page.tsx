@@ -63,7 +63,22 @@ export default function ProductDetailPage() {
   }, [slug]);
 
   const aiPreviews = product?.aiPreviews ?? [];
+  const productImageUrl =
+    (product as { imageUrl?: string | null } | null)?.imageUrl ??
+    (
+      product as
+        | { images?: Array<{ url: string; isPrimary: boolean }> }
+        | null
+    )?.images?.find((i) => i.isPrimary)?.url ??
+    (product as { images?: Array<{ url: string }> } | null)?.images?.[0]
+      ?.url ??
+    null;
   const currentPreview = aiPreviews[activePreview] ?? null;
+  const heroSrc = currentPreview
+    ? mediaUrl(currentPreview.previewUrl)
+    : productImageUrl
+      ? mediaUrl(productImageUrl)
+      : null;
 
   const selected = useMemo(
     () =>
@@ -134,11 +149,15 @@ export default function ProductDetailPage() {
       <div className="mx-auto grid max-w-5xl gap-6 px-4 sm:px-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-8">
         <div>
           <div className="relative aspect-[3/4] overflow-hidden rounded-xl bg-gradient-to-br from-sabu-leaf to-sabu-ink lg:aspect-[4/5] lg:min-h-[360px]">
-            {currentPreview ? (
+            {heroSrc ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={mediaUrl(currentPreview.previewUrl)}
-                alt={`${product.name} AI preview`}
+                src={heroSrc}
+                alt={
+                  currentPreview
+                    ? `${product.name} AI preview`
+                    : product.name
+                }
                 className="h-full w-full object-cover"
               />
             ) : (
