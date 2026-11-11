@@ -352,6 +352,23 @@ Phase C (weeks)   → photos + monitoring + staging
 Phase D (later)   → replicas / workers / bigger DB
 ```
 
+### When orders grow (what to learn next)
+
+You do not need deep scaling knowledge on day one. When real order volume appears, study in this order:
+
+| Learn | Why orders care | Where |
+|-------|-----------------|-------|
+| 1. Deploy logs + healthchecks | A down API = no checkout | §4.1, §6 |
+| 2. PostGIS backups + never `db:reset` | Orders/payments live in the DB | §4.7, migrations doc |
+| 3. Connection pool / DB size | More checkouts = more queries | §4.4, §8 |
+| 4. Media vs DB | Order rows ≠ receipt/product images | §5, migrations §12 |
+| 5. Replicas + workers | Only after metrics show CPU/RAM pressure | §8, Phase D |
+| 6. Staging before migrate | A bad migration can block all new orders | §7, Phase C4 |
+
+**Order-specific watch list (later):** payment webhook failures, receipt uploads filling media, delivery/dispatch job errors, outbox/event lag, 5xx on `/checkout` paths.
+
+Re-read this doc + `docs/railway-migrations-cicd.md` before you buy a bigger Railway plan — most “we need scale” moments are really backups, healthchecks, or a full disk.
+
 ---
 
 ## 12. Suggested “next 3” before / at go-live
