@@ -188,6 +188,7 @@ curl https://<your-api-domain>/v1/finance/health
 
 ## 11. Related project docs
 
+- Stability & performance (crashes, photos, healthchecks): `docs/railway-stability-performance.md`
 - Marketplace roadmap: `docs/ROADMAP-marketplace.md`
 - Data model: `docs/ERD-marketplace.md`
 
