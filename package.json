@@ -16,6 +16,7 @@
     "db:down": "docker compose down",
     "db:migrate": "npm run migrate -w @sabu/db",
     "db:reset": "npm run reset -w @sabu/db",
+    "start:api:railway": "node scripts/railway-api-entrypoint.js",
     "seed:demo-images": "node scripts/seed_demo_enhanced_images.js",
     "lint": "npm run lint -ws --if-present"
   },

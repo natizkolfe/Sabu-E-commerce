@@ -22,14 +22,26 @@ function loadEnv() {
   }
 }
 
+function connectionInfo(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.hostname}:${u.port || "5432"}/${u.pathname.replace(/^\//, "")}`;
+  } catch {
+    return "(invalid DATABASE_URL)";
+  }
+}
+
 async function main() {
   loadEnv();
   const reset = process.argv.includes("--reset");
-  const client = new Client({
-    connectionString:
-      process.env.DATABASE_URL ||
-      `postgresql://${process.env.PGUSER || "sabu"}:${process.env.PGPASSWORD || "sabu"}@${process.env.PGHOST || "localhost"}:${process.env.PGPORT || "5432"}/${process.env.PGDATABASE || "sabu"}`,
-  });
+  const connectionString =
+    process.env.DATABASE_URL ||
+    `postgresql://${process.env.PGUSER || "sabu"}:${process.env.PGPASSWORD || "sabu"}@${process.env.PGHOST || "localhost"}:${process.env.PGPORT || "5432"}/${process.env.PGDATABASE || "sabu"}`;
+
+  console.log(`migrate target: ${connectionInfo(connectionString)}`);
+  console.log(`migrations dir: ${migrationsDir}`);
+
+  const client = new Client({ connectionString });
 
   await client.connect();
 

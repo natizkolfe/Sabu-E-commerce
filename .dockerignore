@@ -1,0 +1,17 @@
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.turbo
+**/coverage
+.git
+.cursor
+.env
+.env.*
+!.env.example
+apps/api/uploads
+**/*.log
+**/.DS_Store
+tmp
+schema_raw.txt
+agent-transcripts

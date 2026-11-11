@@ -1,0 +1,36 @@
+# Sabu API production image (Railway / CI-CD)
+# Builds Nest API and keeps @sabu/db migrations in the final image so
+# migrations run securely on every deploy over the private Postgres network.
+
+FROM node:20-bookworm-slim AS build
+WORKDIR /app
+
+# Workspace manifests first (better layer caching)
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/admin/package.json apps/admin/
+COPY apps/web/package.json apps/web/
+COPY packages/db/package.json packages/db/
+
+RUN npm ci
+
+COPY . .
+RUN npm run build --workspace=@sabu/api \
+  && test -f apps/api/dist/main.js \
+  && test -d packages/db/migrations
+
+FROM node:20-bookworm-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Runtime needs: compiled API, migration SQL + script, node_modules, entrypoint
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/packages/db ./packages/db
+COPY --from=build /app/scripts/railway-api-entrypoint.js ./scripts/railway-api-entrypoint.js
+
+# Railway injects PORT; Nest reads PORT / API_PORT
+EXPOSE 8080
+CMD ["node", "scripts/railway-api-entrypoint.js"]
