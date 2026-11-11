@@ -30,6 +30,7 @@ COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/packages/db ./packages/db
 COPY --from=build /app/scripts/railway-api-entrypoint.js ./scripts/railway-api-entrypoint.js
+COPY --from=build /app/scripts/seed_kids_catalog_images.js ./scripts/seed_kids_catalog_images.js
 
 # Railway injects PORT; Nest reads PORT / API_PORT
 EXPOSE 8080

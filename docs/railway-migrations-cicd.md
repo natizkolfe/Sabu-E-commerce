@@ -221,3 +221,9 @@ Web/Admin load image via /v1/media/...
 ```
 
 **Capacity note:** Railway trial volumes start around **500 MB**. That’s fine for early catalog work; if you fill it (lots of large photos), grow the volume in Railway or later move media to object storage (S3/R2). Prefer compressed jpeg/webp under ~1–2 MB each.
+
+### Demo kids pastel cards (green placeholders)
+
+Seeded kids products use keys like `demo/kids/….jpg`. If those files are missing, the storefront shows a solid green tile.
+
+On every API boot (unless `SEED_DEMO_KIDS_IMAGES=0`), the entrypoint runs `scripts/seed_kids_catalog_images.js`, which writes soft pastel JPEGs into `MEDIA_ROOT` and keeps `demo/kids` as primary. Brother’s real photos under `products/*` are not overwritten.

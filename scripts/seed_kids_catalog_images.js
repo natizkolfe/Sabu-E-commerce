@@ -7,7 +7,8 @@ const path = require("path");
 const { Client } = require("pg");
 
 const ROOT = path.join(__dirname, "..");
-const UPLOADS = path.join(ROOT, "apps", "api", "uploads");
+const UPLOADS =
+  process.env.MEDIA_ROOT || path.join(ROOT, "apps", "api", "uploads");
 
 const THEMES = [
   { bg: "#f3f6f4", accent: "#1a4d3a", soft: "#d7e6dd" },

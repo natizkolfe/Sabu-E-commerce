@@ -28,6 +28,30 @@ function runMigrate() {
   console.log("[railway-api] Migrations OK.");
 }
 
+function seedDemoKidsImages() {
+  // Soft pastel demo cards for seeded kids catalog (writes under MEDIA_ROOT).
+  // Skipped when SEED_DEMO_KIDS_IMAGES=0. Real product uploads use products/* and are untouched.
+  if (process.env.SEED_DEMO_KIDS_IMAGES === "0") {
+    console.log("[railway-api] Skipping demo kids image seed (SEED_DEMO_KIDS_IMAGES=0).");
+    return;
+  }
+  const script = path.join(root, "scripts", "seed_kids_catalog_images.js");
+  console.log("[railway-api] Seeding pastel demo/kids catalog images…");
+  const result = spawnSync(process.execPath, [script], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    console.warn(
+      "[railway-api] Demo kids image seed failed (non-fatal):",
+      result.status,
+    );
+  } else {
+    console.log("[railway-api] Demo kids images ready.");
+  }
+}
+
 function startApi() {
   const mainJs = path.join(root, "apps", "api", "dist", "main.js");
   console.log(`[railway-api] Starting API: ${mainJs}`);
@@ -50,4 +74,5 @@ function startApi() {
 }
 
 runMigrate();
+seedDemoKidsImages();
 startApi();
