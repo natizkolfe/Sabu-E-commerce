@@ -120,12 +120,15 @@ For service `@sabu/api`:
 
 | Setting | Value |
 |---------|--------|
+| Config file | `railway.api.json` (or Dockerfile path `Dockerfile.api`) |
 | Builder | Dockerfile |
 | Dockerfile path | `Dockerfile.api` |
-| Start command | *(leave empty — image `CMD` runs the entrypoint)* |
+| Start command | `node scripts/railway-api-entrypoint.js` (also wired as `npm run start:prod -w @sabu/api`) |
 | `DATABASE_URL` | Reference Postgres `DATABASE_URL` |
 | `NODE_ENV` | `production` |
 | JWT / auth vars | Set in Variables (never commit) |
+
+`apps/api` `start:prod` calls the same entrypoint so even Railpack deploys migrate before boot.
 
 Public domain example:
 
