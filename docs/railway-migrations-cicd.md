@@ -192,3 +192,32 @@ curl https://<your-api-domain>/v1/finance/health
 - Data model: `docs/ERD-marketplace.md`
 
 When Admin is deployed, point `NEXT_PUBLIC_API_URL` at the public API `/v1` URL so your brother can enter **real products into this real database**.
+
+---
+
+## 12. Product pictures (why a second volume)
+
+PostGIS volume stores **database rows** (product name, price, image *keys*).  
+Picture **files** are different: the API writes them under `MEDIA_ROOT` on disk.
+
+Without a volume on `@sabu/api`, every redeploy wiped those files.  
+We fixed that:
+
+| Piece | Value |
+|-------|--------|
+| Volume name | `api-uploads` |
+| Mount path | `/data/uploads` |
+| Env var | `MEDIA_ROOT=/data/uploads` |
+
+```
+Brother uploads photo in Admin
+        │
+        ▼
+API saves file → /data/uploads/...   (api-uploads volume — survives redeploy)
+API saves key  → PostGIS catalog tables (postgis-volume)
+        │
+        ▼
+Web/Admin load image via /v1/media/...
+```
+
+**Capacity note:** Railway trial volumes start around **500 MB**. That’s fine for early catalog work; if you fill it (lots of large photos), grow the volume in Railway or later move media to object storage (S3/R2). Prefer compressed jpeg/webp under ~1–2 MB each.
