@@ -97,6 +97,35 @@ export type DeliveryAdminDetail = {
   }>;
 };
 
+export type DispatchSettings = {
+  offerTtlMinutes: number;
+  defaultSpeedKmh: number;
+  feePerKm: number;
+  minFee: number;
+  maxFee: number | null;
+  freeOverAmount: number | null;
+  originLng: number;
+  originLat: number;
+  originName: string;
+  originAddress: string;
+  standardEnabled: boolean;
+  expressEnabled: boolean;
+  expressConfigured: boolean;
+  standardBaseFare: number;
+  expressBaseFare: number;
+  expressFeePerKm: number | null;
+  expressSurcharge: number;
+  peakSurcharge: number;
+  holidaySurcharge: number;
+  standardEtaBufferMinutes: number;
+  expressEtaBufferMinutes: number;
+  expressSpeedKmh: number | null;
+  promoDiscountAmount: number;
+  promoDiscountPercent: number;
+  promoLabel: string | null;
+  etaDisclaimer: string;
+};
+
 export const adminApi = {
   requestOtp(phone: string, fullName?: string) {
     return request<{ ok: boolean; expiresAt: string; devCode?: string }>(
@@ -844,65 +873,19 @@ export const adminApi = {
   },
 
   getDispatchSettings(token: string) {
-    return request<{
-      offerTtlMinutes: number;
-      defaultSpeedKmh: number;
-      feePerKm: number;
-      minFee: number;
-      maxFee: number | null;
-      freeOverAmount: number | null;
-      originLng: number;
-      originLat: number;
-      originName: string;
-      originAddress: string;
-      standardEnabled: boolean;
-      expressEnabled: boolean;
-      expressConfigured: boolean;
-      standardBaseFare: number;
-      expressBaseFare: number;
-      expressFeePerKm: number | null;
-      expressSurcharge: number;
-      peakSurcharge: number;
-      holidaySurcharge: number;
-      standardEtaBufferMinutes: number;
-      expressEtaBufferMinutes: number;
-      expressSpeedKmh: number | null;
-      promoDiscountAmount: number;
-      promoDiscountPercent: number;
-      promoLabel: string | null;
-      etaDisclaimer: string;
-    }>("/delivery/admin/settings", { token });
+    return request<DispatchSettings>("/delivery/admin/settings", { token });
   },
 
   updateDispatchSettings(
     token: string,
-    body: Partial<{
-      offerTtlMinutes: number;
-      defaultSpeedKmh: number;
-      feePerKm: number;
-      minFee: number;
-      maxFee: number | null;
-      freeOverAmount: number | null;
-      originLng: number;
-      originLat: number;
-      standardEnabled: boolean;
-      expressEnabled: boolean;
-      standardBaseFare: number;
-      expressBaseFare: number;
-      expressFeePerKm: number | null;
-      expressSurcharge: number;
-      peakSurcharge: number;
-      holidaySurcharge: number;
-      standardEtaBufferMinutes: number;
-      expressEtaBufferMinutes: number;
-      expressSpeedKmh: number | null;
-      promoDiscountAmount: number;
-      promoDiscountPercent: number;
-      promoLabel: string | null;
-      etaDisclaimer: string;
-    }>,
+    body: Partial<
+      Omit<
+        DispatchSettings,
+        "originName" | "originAddress" | "expressConfigured"
+      >
+    >,
   ) {
-    return request("/delivery/admin/settings", {
+    return request<DispatchSettings>("/delivery/admin/settings", {
       method: "PUT",
       token,
       body: JSON.stringify(body),
