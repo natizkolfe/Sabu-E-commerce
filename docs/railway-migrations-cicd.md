@@ -120,10 +120,10 @@ For service `@sabu/api`:
 
 | Setting | Value |
 |---------|--------|
-| Config file | `railway.api.json` (or Dockerfile path `Dockerfile.api`) |
-| Builder | Dockerfile |
+| Builder | Prefer **Dockerfile** with path `Dockerfile.api` (set in Railway service settings) |
 | Dockerfile path | `Dockerfile.api` |
-| Start command | `node scripts/railway-api-entrypoint.js` (also wired as `npm run start:prod -w @sabu/api`) |
+| Start command | `node scripts/railway-api-entrypoint.js` **or** `npm run start:prod --workspace=@sabu/api` (both run migrate-then-start) |
+| Note | `railway.api.json` in the repo documents the intended settings; Railway’s older “config as code” path is deprecated, so apply these in the dashboard/API settings |
 | `DATABASE_URL` | Reference Postgres `DATABASE_URL` |
 | `NODE_ENV` | `production` |
 | JWT / auth vars | Set in Variables (never commit) |
@@ -169,6 +169,8 @@ curl https://<your-api-domain>/v1/finance/health
 | `ENOTFOUND postgres.railway.internal` | Migrate ran on your laptop with internal URL | Run migrate only inside Railway, or use a temporary public URL carefully |
 | `relation "…" does not exist` | Migrations never applied / image lacked SQL files | Use `Dockerfile.api` + entrypoint; redeploy |
 | Deploy stuck / failed on migrate | Bad SQL in a new migration | Fix SQL, push again; failed txn is rolled back |
+| `extension "postgis" is not available` | Stock Railway Postgres image has no PostGIS | Deploy Railway template **`postgis`** (or image `postgis/postgis:…`) and point API `DATABASE_URL` at `${{PostGIS.DATABASE_PRIVATE_URL}}` |
+| Postgres crashes after swapping images | Old volume/data dir incompatible with new major version | Use a **fresh PostGIS service + volume**; don’t reuse a PG18 stock volume with a mismatched image |
 | Admin build fails, API OK | Separate Next.js typecheck issue | Fix admin separately; doesn’t block API schema |
 
 ---
