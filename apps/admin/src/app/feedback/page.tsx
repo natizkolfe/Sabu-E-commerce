@@ -72,11 +72,15 @@ export default function FeedbackPage() {
               </div>
               <p className="text-xs text-[#8aa897]">
                 {new Date(r.createdAt).toLocaleString()}
-                {r.productRating != null ? ` · Products ${r.productRating}/5` : ""}
+                {r.serviceRating != null
+                  ? ` · Website ${r.serviceRating}/5`
+                  : ""}
+                {r.productRating != null
+                  ? ` · Interactive ${r.productRating}/5`
+                  : ""}
                 {r.deliveryRating != null
                   ? ` · Delivery ${r.deliveryRating}/5`
                   : ""}
-                {r.serviceRating != null ? ` · Service ${r.serviceRating}/5` : ""}
                 {r.wouldRecommend != null
                   ? r.wouldRecommend
                     ? " · Would recommend"

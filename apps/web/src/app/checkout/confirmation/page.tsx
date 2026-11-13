@@ -347,6 +347,7 @@ function ConfirmationInner() {
           <OrderFeedbackForm
             orderNumber={snapshot.orderNumber}
             trackToken={track || snapshot.trackToken || ""}
+            orderStatus={snapshot.status}
           />
         )}
       </div>

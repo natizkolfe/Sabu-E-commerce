@@ -294,6 +294,7 @@ function TrackInner() {
             orderNumber={data.orderNumber}
             trackToken={tokenQ}
             initialFeedback={data.feedback ?? null}
+            orderStatus={data.status}
           />
         )}
       </div>
