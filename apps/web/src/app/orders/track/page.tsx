@@ -6,6 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "../../../lib/api";
 import { formatEtb } from "../../../lib/money";
 import { formatLabel } from "../../../lib/format";
+import {
+  ETHIOPIAN_PHONE_ERROR,
+  isValidEthiopianMobile,
+  normalizeEthiopianPhone,
+} from "../../../lib/phone";
 
 function TrackInner() {
   const router = useRouter();
@@ -13,11 +18,7 @@ function TrackInner() {
   const orderNumberQ = params.get("orderNumber") ?? "";
   const tokenQ = params.get("token") ?? "";
   const [orderNumber, setOrderNumber] = useState(orderNumberQ);
-  const [token, setToken] = useState(tokenQ);
-  const [phone, setPhone] = useState("+251");
-  const [mode, setMode] = useState<"token" | "phone">(
-    tokenQ ? "token" : "phone",
-  );
+  const [phoneLocal, setPhoneLocal] = useState("");
   const [data, setData] = useState<Awaited<
     ReturnType<typeof api.trackOrder>
   > | null>(null);
@@ -26,6 +27,10 @@ function TrackInner() {
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
+
+  const phoneValid = isValidEthiopianMobile(phoneLocal);
+  const phoneE164 = normalizeEthiopianPhone(phoneLocal) ?? "";
 
   useEffect(() => {
     if (!orderNumberQ || !tokenQ) return;
@@ -47,16 +52,12 @@ function TrackInner() {
 
   function onLookup(e: FormEvent) {
     e.preventDefault();
-    if (mode === "token") {
-      router.push(
-        `/orders/track?orderNumber=${encodeURIComponent(orderNumber)}&token=${encodeURIComponent(token)}`,
-      );
-      return;
-    }
+    setShowErrors(true);
+    if (!orderNumber.trim() || !phoneValid) return;
     setBusy(true);
     setError(null);
     api
-      .recoverTrack(orderNumber, phone)
+      .recoverTrack(orderNumber.trim(), phoneE164)
       .then((res) => {
         sessionStorage.setItem(`sabu_track_${res.orderNumber}`, res.trackToken);
         router.push(
@@ -77,25 +78,8 @@ function TrackInner() {
             Track order
           </h1>
           <p className="text-sabu-moss">
-            Enter your order number and the tracking code from your order
-            confirmation, or look it up with the phone number used at checkout.
+            Enter your order number and the phone number used at checkout.
           </p>
-          <div className="flex gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setMode("token")}
-              className={`px-3 py-1.5 ${mode === "token" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
-            >
-              Tracking code
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("phone")}
-              className={`px-3 py-1.5 ${mode === "phone" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
-            >
-              Phone number
-            </button>
-          </div>
           <label className="block text-sm text-sabu-moss">
             Order number
             <input
@@ -106,29 +90,35 @@ function TrackInner() {
               className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
             />
           </label>
-          {mode === "token" ? (
-            <label className="block text-sm text-sabu-moss">
-              Tracking code
+          <div>
+            <p className="text-sm text-sabu-moss">Phone used at checkout</p>
+            <div
+              className={`mt-1 flex items-stretch border-b ${
+                showErrors && !phoneValid
+                  ? "border-red-500"
+                  : "border-sabu-moss/40"
+              }`}
+            >
+              <span className="flex items-center bg-sabu-mist/20 px-3 py-3 text-sm font-medium text-sabu-ink">
+                +251
+              </span>
               <input
                 required
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="From your order confirmation"
-                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                value={phoneLocal}
+                onChange={(e) =>
+                  setPhoneLocal(e.target.value.replace(/\D/g, "").slice(0, 9))
+                }
+                placeholder="911123456"
+                className="w-full bg-transparent px-3 py-3 text-sm outline-none"
+                aria-label="Ethiopian mobile number without country code"
               />
-            </label>
-          ) : (
-            <label className="block text-sm text-sabu-moss">
-              Phone used at checkout
-              <input
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+251 9…"
-                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
-              />
-            </label>
-          )}
+            </div>
+            {showErrors && !phoneValid && (
+              <p className="mt-1 text-xs text-red-700">{ETHIOPIAN_PHONE_ERROR}</p>
+            )}
+          </div>
           {error && <p className="text-sm text-red-700">{error}</p>}
           <button
             type="submit"
