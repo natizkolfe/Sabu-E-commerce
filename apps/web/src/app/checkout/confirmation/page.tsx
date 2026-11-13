@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { OrderFeedbackForm } from "../../../components/order-feedback-form";
 import { api, ApiError, CheckoutResult } from "../../../lib/api";
 import { formatEtb } from "../../../lib/money";
 import { formatLabel } from "../../../lib/format";
@@ -341,6 +342,13 @@ function ConfirmationInner() {
             Keep shopping
           </Link>
         </div>
+
+        {(track || snapshot.trackToken) && (
+          <OrderFeedbackForm
+            orderNumber={snapshot.orderNumber}
+            trackToken={track || snapshot.trackToken || ""}
+          />
+        )}
       </div>
     </main>
   );

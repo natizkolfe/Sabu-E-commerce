@@ -513,6 +513,16 @@ export const api = {
         returnPolicyLabel?: string | null;
         returnPolicyDescription?: string | null;
       }>;
+      feedback?: {
+        id: string;
+        overallRating: number;
+        productRating: number | null;
+        deliveryRating: number | null;
+        serviceRating: number | null;
+        comment: string | null;
+        wouldRecommend: boolean | null;
+        createdAt: string;
+      } | null;
       trackToken?: string;
     }>(`/sales/orders/track?${qs}`);
   },
@@ -530,6 +540,51 @@ export const api = {
     }>("/sales/orders/track/recover", {
       method: "POST",
       body: JSON.stringify({ orderNumber, phone }),
+    });
+  },
+
+  getOrderFeedback(orderNumber: string, token: string) {
+    const qs = new URLSearchParams({ orderNumber, token });
+    return request<{
+      feedback: {
+        id: string;
+        overallRating: number;
+        productRating: number | null;
+        deliveryRating: number | null;
+        serviceRating: number | null;
+        comment: string | null;
+        wouldRecommend: boolean | null;
+        createdAt: string;
+      } | null;
+    }>(`/sales/orders/feedback?${qs}`);
+  },
+
+  submitOrderFeedback(body: {
+    orderNumber: string;
+    token: string;
+    overallRating: number;
+    productRating?: number;
+    deliveryRating?: number;
+    serviceRating?: number;
+    comment?: string;
+    wouldRecommend?: boolean;
+  }) {
+    return request<{
+      ok: boolean;
+      message: string;
+      feedback: {
+        id: string;
+        overallRating: number;
+        productRating: number | null;
+        deliveryRating: number | null;
+        serviceRating: number | null;
+        comment: string | null;
+        wouldRecommend: boolean | null;
+        createdAt: string;
+      };
+    }>("/sales/orders/feedback", {
+      method: "POST",
+      body: JSON.stringify(body),
     });
   },
 

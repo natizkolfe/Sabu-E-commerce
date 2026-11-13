@@ -1582,6 +1582,25 @@ export const adminApi = {
     });
   },
 
+  listOrderFeedback(token: string, limit?: number) {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request<
+      Array<{
+        id: string;
+        orderId: string;
+        orderNumber: string;
+        customerName: string | null;
+        overallRating: number;
+        productRating: number | null;
+        deliveryRating: number | null;
+        serviceRating: number | null;
+        comment: string | null;
+        wouldRecommend: boolean | null;
+        createdAt: string;
+      }>
+    >(`/sales/admin/feedback${qs}`, { token });
+  },
+
   listSpecialOrders(token: string, status?: string) {
     const qs = status ? `?status=${encodeURIComponent(status)}` : "";
     return request<

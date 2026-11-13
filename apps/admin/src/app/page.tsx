@@ -14,6 +14,7 @@ import {
 const nav = [
   { href: "/analytics", label: "Dashboard & Analytics" },
   { href: "/orders", label: "Orders" },
+  { href: "/feedback", label: "Customer feedback" },
   { href: "/products", label: "Products & prices" },
   { href: "/categories", label: "Categories" },
   { href: "/attributes", label: "Attributes" },

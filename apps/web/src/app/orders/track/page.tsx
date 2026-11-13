@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { OrderFeedbackForm } from "../../../components/order-feedback-form";
 import { api, ApiError } from "../../../lib/api";
 import { formatEtb } from "../../../lib/money";
 import { formatLabel } from "../../../lib/format";
@@ -287,6 +288,14 @@ function TrackInner() {
             </li>
           ))}
         </ul>
+
+        {tokenQ && (
+          <OrderFeedbackForm
+            orderNumber={data.orderNumber}
+            trackToken={tokenQ}
+            initialFeedback={data.feedback ?? null}
+          />
+        )}
       </div>
     </main>
   );

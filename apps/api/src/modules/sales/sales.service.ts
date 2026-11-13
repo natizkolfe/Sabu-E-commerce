@@ -844,6 +844,178 @@ export class SalesService {
             : null),
         returnPolicyDescription: i.return_policy_description_snapshot,
       })),
+      feedback: await this.getOrderFeedbackByOrderId(order.id),
+    };
+  }
+
+  async submitOrderFeedback(
+    orderNumber: string,
+    token: string,
+    body: {
+      overallRating: number;
+      productRating?: number;
+      deliveryRating?: number;
+      serviceRating?: number;
+      comment?: string;
+      wouldRecommend?: boolean;
+    },
+  ) {
+    const overall = Math.floor(Number(body.overallRating));
+    if (!Number.isFinite(overall) || overall < 1 || overall > 5) {
+      throw new BadRequestException('Overall rating must be 1–5 stars');
+    }
+    const optionalRating = (v: number | undefined, label: string) => {
+      if (v == null) return null;
+      const n = Math.floor(Number(v));
+      if (!Number.isFinite(n) || n < 1 || n > 5) {
+        throw new BadRequestException(`${label} must be 1–5 stars`);
+      }
+      return n;
+    };
+    const productRating = optionalRating(body.productRating, 'Product rating');
+    const deliveryRating = optionalRating(body.deliveryRating, 'Delivery rating');
+    const serviceRating = optionalRating(body.serviceRating, 'Service rating');
+    const comment = body.comment?.trim() || null;
+    if (comment && comment.length > 2000) {
+      throw new BadRequestException('Comment is too long (max 2000 characters)');
+    }
+
+    const { rows } = await this.db.query<{ id: string }>(
+      `SELECT id FROM sales.orders
+       WHERE order_number = $1 AND guest_track_token_hash = $2`,
+      [orderNumber, sha256(token)],
+    );
+    if (!rows[0]) throw new NotFoundException('Order not found');
+
+    const { rows: saved } = await this.db.query<{
+      id: string;
+      overall_rating: number;
+      product_rating: number | null;
+      delivery_rating: number | null;
+      service_rating: number | null;
+      comment: string | null;
+      would_recommend: boolean | null;
+      created_at: Date;
+    }>(
+      `INSERT INTO sales.order_feedback (
+         order_id, overall_rating, product_rating, delivery_rating, service_rating,
+         comment, would_recommend
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (order_id) DO UPDATE SET
+         overall_rating = EXCLUDED.overall_rating,
+         product_rating = EXCLUDED.product_rating,
+         delivery_rating = EXCLUDED.delivery_rating,
+         service_rating = EXCLUDED.service_rating,
+         comment = EXCLUDED.comment,
+         would_recommend = EXCLUDED.would_recommend,
+         updated_at = now()
+       RETURNING id, overall_rating, product_rating, delivery_rating, service_rating,
+                 comment, would_recommend, created_at`,
+      [
+        rows[0].id,
+        overall,
+        productRating,
+        deliveryRating,
+        serviceRating,
+        comment,
+        body.wouldRecommend ?? null,
+      ],
+    );
+    const f = saved[0];
+    return {
+      ok: true,
+      message: 'Thank you for your feedback!',
+      feedback: {
+        id: f.id,
+        overallRating: f.overall_rating,
+        productRating: f.product_rating,
+        deliveryRating: f.delivery_rating,
+        serviceRating: f.service_rating,
+        comment: f.comment,
+        wouldRecommend: f.would_recommend,
+        createdAt: f.created_at,
+      },
+    };
+  }
+
+  async getOrderFeedback(orderNumber: string, token: string) {
+    const { rows } = await this.db.query<{ id: string }>(
+      `SELECT id FROM sales.orders
+       WHERE order_number = $1 AND guest_track_token_hash = $2`,
+      [orderNumber, sha256(token)],
+    );
+    if (!rows[0]) throw new NotFoundException('Order not found');
+    return {
+      feedback: await this.getOrderFeedbackByOrderId(rows[0].id),
+    };
+  }
+
+  async adminListFeedback(opts?: { limit?: number }) {
+    const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 200);
+    const { rows } = await this.db.query<{
+      id: string;
+      order_id: string;
+      order_number: string;
+      recipient_name: string | null;
+      overall_rating: number;
+      product_rating: number | null;
+      delivery_rating: number | null;
+      service_rating: number | null;
+      comment: string | null;
+      would_recommend: boolean | null;
+      created_at: Date;
+    }>(
+      `SELECT f.id, f.order_id, o.order_number, o.ship_recipient_name AS recipient_name,
+              f.overall_rating, f.product_rating, f.delivery_rating, f.service_rating,
+              f.comment, f.would_recommend, f.created_at
+       FROM sales.order_feedback f
+       JOIN sales.orders o ON o.id = f.order_id
+       ORDER BY f.created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      orderId: r.order_id,
+      orderNumber: r.order_number,
+      customerName: r.recipient_name,
+      overallRating: r.overall_rating,
+      productRating: r.product_rating,
+      deliveryRating: r.delivery_rating,
+      serviceRating: r.service_rating,
+      comment: r.comment,
+      wouldRecommend: r.would_recommend,
+      createdAt: r.created_at,
+    }));
+  }
+
+  private async getOrderFeedbackByOrderId(orderId: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      overall_rating: number;
+      product_rating: number | null;
+      delivery_rating: number | null;
+      service_rating: number | null;
+      comment: string | null;
+      would_recommend: boolean | null;
+      created_at: Date;
+    }>(
+      `SELECT id, overall_rating, product_rating, delivery_rating, service_rating,
+              comment, would_recommend, created_at
+       FROM sales.order_feedback WHERE order_id = $1`,
+      [orderId],
+    );
+    if (!rows[0]) return null;
+    const f = rows[0];
+    return {
+      id: f.id,
+      overallRating: f.overall_rating,
+      productRating: f.product_rating,
+      deliveryRating: f.delivery_rating,
+      serviceRating: f.service_rating,
+      comment: f.comment,
+      wouldRecommend: f.would_recommend,
+      createdAt: f.created_at,
     };
   }
 

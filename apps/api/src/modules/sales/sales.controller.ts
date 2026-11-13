@@ -133,6 +133,41 @@ export class SalesController {
     return this.salesService.recoverTrackByPhone(body.orderNumber, body.phone);
   }
 
+  @Public()
+  @Get('orders/feedback')
+  getFeedback(
+    @Query('orderNumber') orderNumber: string,
+    @Query('token') token: string,
+  ) {
+    return this.salesService.getOrderFeedback(orderNumber, token);
+  }
+
+  @Public()
+  @Post('orders/feedback')
+  submitFeedback(
+    @Body()
+    body: {
+      orderNumber: string;
+      token: string;
+      overallRating: number;
+      productRating?: number;
+      deliveryRating?: number;
+      serviceRating?: number;
+      comment?: string;
+      wouldRecommend?: boolean;
+    },
+  ) {
+    return this.salesService.submitOrderFeedback(body.orderNumber, body.token, body);
+  }
+
+  @Get('admin/feedback')
+  @RequirePermissions('orders.read')
+  adminFeedback(@Query('limit') limit?: string) {
+    return this.salesService.adminListFeedback({
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   @Get('admin/orders')
   @RequirePermissions('orders.read')
   adminOrders(
