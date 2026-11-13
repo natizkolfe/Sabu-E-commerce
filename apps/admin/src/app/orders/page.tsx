@@ -103,10 +103,10 @@ export default function OrdersAdminPage() {
     setError(null);
     try {
       const savedStatus = nextStatus;
-      const next = await adminApi.updateOrderStatus(token, detail.id, {
+      const next = (await adminApi.updateOrderStatus(token, detail.id, {
         status: savedStatus,
-      });
-      setDetail(next as OrderDetail);
+      })) as OrderDetail;
+      setDetail(next);
       setNextStatus(suggestedNextStatus(next.status ?? savedStatus));
       setMessage(`Status updated to ${formatLabel(savedStatus)}`);
       await refresh(token);
