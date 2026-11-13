@@ -324,6 +324,12 @@ export default function AnalyticsDashboardPage() {
             <Link href="/payments" className="border border-[#24302a] px-3 py-2 text-[#b7c7be]">
               Payments
             </Link>
+            <Link href="/vendors" className="border border-[#24302a] px-3 py-2 text-[#b7c7be]">
+              Vendors
+            </Link>
+            <Link href="/commissions" className="border border-[#24302a] px-3 py-2 text-[#b7c7be]">
+              Vendor report
+            </Link>
             <Link href="/deliveries" className="border border-[#24302a] px-3 py-2 text-[#b7c7be]">
               Dispatch
             </Link>

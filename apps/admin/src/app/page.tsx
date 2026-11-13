@@ -18,7 +18,7 @@ const nav = [
   { href: "/categories", label: "Categories" },
   { href: "/attributes", label: "Attributes" },
   { href: "/vendors", label: "Vendors" },
-  { href: "/commissions", label: "Commissions" },
+  { href: "/commissions", label: "Vendor report & payouts" },
   { href: "/special-orders", label: "Special Orders" },
   { href: "/receipts", label: "Receipts" },
   { href: "/partners", label: "Partners" },

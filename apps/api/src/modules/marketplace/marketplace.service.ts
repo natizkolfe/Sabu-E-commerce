@@ -199,14 +199,26 @@ export class MarketplaceService {
       commission_amount: string;
       status: string;
       entry_type: string;
+      settlement_id: string | null;
+      settlement_number: string | null;
+      settlement_status: string | null;
+      paid_at: Date | null;
+      product_summary: string | null;
       created_at: Date;
     }>(
       `SELECT c.id, c.order_id, o.order_number, c.vendor_id, v.display_name AS vendor_name,
               c.gross_amount::text, c.rate_pct::text, c.commission_amount::text,
-              c.status, c.entry_type, c.created_at
+              c.status, c.entry_type, c.settlement_id, s.settlement_number,
+              s.status AS settlement_status, s.paid_at, c.created_at,
+              (
+                SELECT string_agg(oi.name_snapshot || ' ×' || oi.quantity::text, ', ' ORDER BY oi.line_no)
+                FROM sales.order_items oi
+                WHERE oi.order_id = c.order_id AND oi.vendor_id = c.vendor_id
+              ) AS product_summary
        FROM marketplace.commission_entries c
        JOIN marketplace.vendors v ON v.id = c.vendor_id
        JOIN sales.orders o ON o.id = c.order_id
+       LEFT JOIN marketplace.settlements s ON s.id = c.settlement_id
        WHERE ${where.join(' AND ')}
        ORDER BY c.created_at DESC
        LIMIT 200`,
@@ -215,18 +227,32 @@ export class MarketplaceService {
     return rows.map((r) => {
       const gross = Number(r.gross_amount);
       const commission = Number(r.commission_amount);
+      const payoutState =
+        r.settlement_status === 'paid'
+          ? 'paid'
+          : r.settlement_id
+            ? 'settlement_pending'
+            : r.status === 'paid_out'
+              ? 'paid'
+              : 'unpaid';
       return {
         id: r.id,
         orderId: r.order_id,
         orderNumber: r.order_number,
         vendorId: r.vendor_id,
         vendorName: r.vendor_name,
+        productSummary: r.product_summary,
         grossAmount: gross,
         ratePct: Number(r.rate_pct),
         commissionAmount: commission,
         /** Product sales minus Sabu commission — what admin remits to the vendor. */
         netPayable: Math.round((gross - commission) * 100) / 100,
         status: r.status,
+        payoutState,
+        settlementId: r.settlement_id,
+        settlementNumber: r.settlement_number,
+        settlementStatus: r.settlement_status,
+        paidAt: r.paid_at,
         entryType: r.entry_type,
         createdAt: r.created_at,
       };
@@ -252,13 +278,14 @@ export class MarketplaceService {
       net_payable: string;
       status: string;
       payout_reference: string | null;
+      payout_receipt_key: string | null;
       paid_at: Date | null;
       created_at: Date;
     }>(
       `SELECT s.id, s.settlement_number, s.vendor_id, v.display_name AS vendor_name,
               s.period_start::text, s.period_end::text,
               s.gross_sales::text, s.commission_total::text, s.net_payable::text,
-              s.status, s.payout_reference, s.paid_at, s.created_at
+              s.status, s.payout_reference, s.payout_receipt_key, s.paid_at, s.created_at
        FROM marketplace.settlements s
        JOIN marketplace.vendors v ON v.id = s.vendor_id
        WHERE ${where.join(' AND ')}
@@ -266,6 +293,58 @@ export class MarketplaceService {
        LIMIT 100`,
       params,
     );
+
+    const ids = rows.map((r) => r.id);
+    const itemsBySettlement = new Map<
+      string,
+      Array<{
+        entryId: string;
+        orderNumber: string;
+        productSummary: string | null;
+        grossAmount: number;
+        commissionAmount: number;
+        netPayable: number;
+      }>
+    >();
+    if (ids.length) {
+      const { rows: items } = await this.db.query<{
+        settlement_id: string;
+        entry_id: string;
+        order_number: string;
+        product_summary: string | null;
+        gross_amount: string;
+        commission_amount: string;
+      }>(
+        `SELECT si.settlement_id, c.id AS entry_id, o.order_number,
+                c.gross_amount::text, c.commission_amount::text,
+                (
+                  SELECT string_agg(oi.name_snapshot || ' ×' || oi.quantity::text, ', ' ORDER BY oi.line_no)
+                  FROM sales.order_items oi
+                  WHERE oi.order_id = c.order_id AND oi.vendor_id = c.vendor_id
+                ) AS product_summary
+         FROM marketplace.settlement_items si
+         JOIN marketplace.commission_entries c ON c.id = si.commission_entry_id
+         JOIN sales.orders o ON o.id = c.order_id
+         WHERE si.settlement_id = ANY($1::uuid[])
+         ORDER BY o.order_number`,
+        [ids],
+      );
+      for (const it of items) {
+        const gross = Number(it.gross_amount);
+        const fee = Number(it.commission_amount);
+        const list = itemsBySettlement.get(it.settlement_id) ?? [];
+        list.push({
+          entryId: it.entry_id,
+          orderNumber: it.order_number,
+          productSummary: it.product_summary,
+          grossAmount: gross,
+          commissionAmount: fee,
+          netPayable: Math.round((gross - fee) * 100) / 100,
+        });
+        itemsBySettlement.set(it.settlement_id, list);
+      }
+    }
+
     return rows.map((r) => ({
       id: r.id,
       settlementNumber: r.settlement_number,
@@ -278,8 +357,13 @@ export class MarketplaceService {
       netPayable: Number(r.net_payable),
       status: r.status,
       payoutReference: r.payout_reference,
+      payoutReceiptKey: r.payout_receipt_key,
+      payoutReceiptUrl: r.payout_receipt_key
+        ? `/media/file?key=${encodeURIComponent(r.payout_receipt_key)}`
+        : null,
       paidAt: r.paid_at,
       createdAt: r.created_at,
+      items: itemsBySettlement.get(r.id) ?? [],
     }));
   }
 
@@ -363,7 +447,7 @@ export class MarketplaceService {
         );
         await client.query(
           `UPDATE marketplace.commission_entries
-           SET settlement_id = $2, status = 'paid_out'
+           SET settlement_id = $2
            WHERE id = $1`,
           [e.id, settlementId],
         );
@@ -381,18 +465,50 @@ export class MarketplaceService {
 
   async markSettlementPaid(
     id: string,
-    body: { payoutReference?: string },
+    body: {
+      payoutReference?: string;
+      payoutReceiptKey?: string;
+      paidAt?: string;
+    },
   ) {
-    const { rowCount } = await this.db.query(
-      `UPDATE marketplace.settlements SET
-         status = 'paid',
-         payout_reference = COALESCE($2, payout_reference),
-         paid_at = now(),
-         updated_at = now()
-       WHERE id = $1 AND status IN ('draft','approved')`,
-      [id, body.payoutReference ?? null],
-    );
-    if (!rowCount) throw new NotFoundException('Settlement not found or already paid');
+    const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new BadRequestException('Invalid payment confirmation date');
+    }
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        `UPDATE marketplace.settlements SET
+           status = 'paid',
+           payout_reference = COALESCE($2, payout_reference),
+           payout_receipt_key = COALESCE($3, payout_receipt_key),
+           paid_at = $4,
+           updated_at = now()
+         WHERE id = $1 AND status IN ('draft','approved')`,
+        [
+          id,
+          body.payoutReference ?? null,
+          body.payoutReceiptKey ?? null,
+          paidAt.toISOString(),
+        ],
+      );
+      if (!rowCount) {
+        throw new NotFoundException('Settlement not found or already paid');
+      }
+      await client.query(
+        `UPDATE marketplace.commission_entries
+         SET status = 'paid_out'
+         WHERE settlement_id = $1 AND status IN ('accrued','finalized')`,
+        [id],
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
     const list = await this.listSettlements();
     return list.find((s) => s.id === id) ?? null;
   }

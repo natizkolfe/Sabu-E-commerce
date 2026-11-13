@@ -1495,11 +1495,17 @@ export const adminApi = {
         orderNumber: string;
         vendorId: string;
         vendorName: string;
+        productSummary: string | null;
         grossAmount: number;
         ratePct: number;
         commissionAmount: number;
         netPayable: number;
         status: string;
+        payoutState: "unpaid" | "settlement_pending" | "paid";
+        settlementId: string | null;
+        settlementNumber: string | null;
+        settlementStatus: string | null;
+        paidAt: string | null;
         entryType: string;
         createdAt: string;
       }>
@@ -1528,15 +1534,30 @@ export const adminApi = {
         netPayable: number;
         status: string;
         payoutReference: string | null;
+        payoutReceiptKey: string | null;
+        payoutReceiptUrl: string | null;
         paidAt: string | null;
         createdAt: string;
+        items: Array<{
+          entryId: string;
+          orderNumber: string;
+          productSummary: string | null;
+          grossAmount: number;
+          commissionAmount: number;
+          netPayable: number;
+        }>;
       }>
     >(`/marketplace/admin/settlements${qs}`, { token });
   },
 
   createSettlement(
     token: string,
-    body: { vendorId: string; periodStart?: string; periodEnd?: string },
+    body: {
+      vendorId: string;
+      periodStart?: string;
+      periodEnd?: string;
+      entryIds?: string[];
+    },
   ) {
     return request("/marketplace/admin/settlements", {
       method: "POST",
@@ -1548,7 +1569,11 @@ export const adminApi = {
   markSettlementPaid(
     token: string,
     id: string,
-    body?: { payoutReference?: string },
+    body?: {
+      payoutReference?: string;
+      payoutReceiptKey?: string;
+      paidAt?: string;
+    },
   ) {
     return request(`/marketplace/admin/settlements/${id}/mark-paid`, {
       method: "POST",

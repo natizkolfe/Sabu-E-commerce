@@ -111,7 +111,12 @@ export class MarketplaceController {
   @RequirePermissions('marketplace.settlements.write')
   markPaid(
     @Param('id') id: string,
-    @Body() body: { payoutReference?: string },
+    @Body()
+    body: {
+      payoutReference?: string;
+      payoutReceiptKey?: string;
+      paidAt?: string;
+    },
   ) {
     return this.marketplace.markSettlementPaid(id, body ?? {});
   }
