@@ -74,6 +74,8 @@ Storefront auth talks to `NEXT_PUBLIC_API_URL` (default `http://localhost:3001/v
 | Procurement   | `procurement`| special orders, suppliers, POs, GRNs |
 | Logistics     | `logistics`  | international shipments, customs |
 | Payments      | `payments`   | intents, transactions, webhooks, refunds |
+
+Payment provider notes (Chapa / Telebirr): [`docs/payments-chapa-telebirr.md`](docs/payments-chapa-telebirr.md).
 | Delivery      | `delivery`   | zones, drivers, deliveries, PoD |
 | Notifications | `notify`     | templates, providers, deliveries |
 | Finance       | `finance`    | invoices, tax, expenses, journal |

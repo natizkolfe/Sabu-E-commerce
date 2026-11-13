@@ -36,6 +36,7 @@ Extend the existing Ethiopian E-Commerce & ERP modular monolith without rebuildi
 - Telebirr/CBE/etc. remain seeded `unverified` until merchant access.
 - Intents + transactions + webhook inbox; never trust browser return URL alone.
 - Admins enable/disable methods.
+- Developer links + integration verdict: [payments-chapa-telebirr.md](./payments-chapa-telebirr.md).
 
 ### FR-3 Bank transfer verification
 - Customer sees company bank accounts, uploads receipt, optional reference.
