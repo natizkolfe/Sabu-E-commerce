@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 export default function VendorsPage() {
@@ -117,7 +118,7 @@ export default function VendorsPage() {
                   <span className="text-[#8aa897]">{v.vendorCode}</span>
                 </p>
                 <p className="text-xs text-[#9eb0a6]">
-                  {v.status} ·{" "}
+                  {formatLabel(v.status)} ·{" "}
                   {v.commissionRatePct != null
                     ? `${v.commissionRatePct}%`
                     : "global rate"}{" "}

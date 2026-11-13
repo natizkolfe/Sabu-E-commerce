@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 export default function CommissionsPage() {
@@ -66,7 +67,8 @@ export default function CommissionsPage() {
               <span>
                 {r.orderNumber} · {r.vendorName}
                 <span className="mt-0.5 block text-xs text-[#8aa897]">
-                  {r.entryType} · {r.status} · {r.ratePct}%
+                  {formatLabel(r.entryType)} · {formatLabel(r.status)} ·{" "}
+                  {r.ratePct}%
                 </span>
               </span>
               <span className="text-right">

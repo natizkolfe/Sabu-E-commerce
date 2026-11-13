@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { API_URL, adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 type ProductListItem = Awaited<ReturnType<typeof adminApi.listProducts>>[number];
@@ -525,7 +526,8 @@ export default function ProductsAdminPage() {
                       <span className="block truncate">{p.name}</span>
                       <span className="mt-0.5 block text-[11px] text-[#8aa897]">
                         {p.retailNumber ? `${p.retailNumber} · ` : ""}
-                        {p.categoryName} · {p.variantCount} var · {p.status}
+                        {p.categoryName} · {p.variantCount} var ·{" "}
+                        {formatLabel(p.status)}
                       </span>
                     </span>
                     {p.bulkPurchasingEnabled && (
@@ -712,7 +714,7 @@ export default function ProductsAdminPage() {
                       )}
                     </div>
                     <span className="text-[11px] uppercase tracking-wide text-[#8aa897]">
-                      {detail.status}
+                      {formatLabel(detail.status)}
                       {detail.bulkPurchasingEnabled ? " · bulk" : ""}
                     </span>
                   </div>

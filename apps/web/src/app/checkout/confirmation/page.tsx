@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, ApiError, CheckoutResult } from "../../../lib/api";
 import { formatEtb } from "../../../lib/money";
+import { formatLabel } from "../../../lib/format";
 
 function ConfirmationInner() {
   const params = useSearchParams();
@@ -102,8 +103,8 @@ function ConfirmationInner() {
       `Order: ${snapshot.orderNumber}`,
       `Customer: ${snapshot.recipientName ?? ""}`,
       `Phone: ${snapshot.recipientPhone ?? ""}`,
-      `Status: ${snapshot.status} / payment ${snapshot.paymentStatus}`,
-      `Payment: ${snapshot.paymentMethodDisplayName ?? snapshot.paymentMethodCode ?? ""}`,
+      `Status: ${formatLabel(snapshot.status)} / payment ${formatLabel(snapshot.paymentStatus)}`,
+      `Payment: ${snapshot.paymentMethodDisplayName ?? formatLabel(snapshot.paymentMethodCode) ?? ""}`,
       `Address: ${snapshot.addressText ?? ""}`,
       `Total: ${snapshot.grandTotal} ${snapshot.currency ?? "ETB"}`,
       "",
@@ -175,9 +176,9 @@ function ConfirmationInner() {
           <Row label="Customer" value={snapshot.recipientName ?? "—"} />
           <Row
             label="Payment"
-            value={`${snapshot.paymentMethodDisplayName ?? snapshot.paymentMethodCode ?? "—"} · ${snapshot.paymentStatus ?? "unpaid"}`}
+            value={`${snapshot.paymentMethodDisplayName ?? formatLabel(snapshot.paymentMethodCode)} · ${formatLabel(snapshot.paymentStatus ?? "unpaid")}`}
           />
-          <Row label="Order status" value={snapshot.status} />
+          <Row label="Order status" value={formatLabel(snapshot.status)} />
           <Row
             label="Delivery"
             value={

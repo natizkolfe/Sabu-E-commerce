@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 type OrderRow = Awaited<ReturnType<typeof adminApi.listOrders>>[number];
@@ -166,13 +167,13 @@ export default function OrdersAdminPage() {
                   className="bg-[#17201c] px-2 py-1.5 text-xs"
                 >
                   <option value="">All statuses</option>
-                  <option value="pending_payment">pending_payment</option>
-                  <option value="confirmed">confirmed</option>
-                  <option value="processing">processing</option>
-                  <option value="ready_for_dispatch">ready_for_dispatch</option>
-                  <option value="dispatched">dispatched</option>
-                  <option value="delivered">delivered</option>
-                  <option value="cancelled">cancelled</option>
+                  <option value="pending_payment">Pending payment</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="processing">Processing</option>
+                  <option value="ready_for_dispatch">Ready for dispatch</option>
+                  <option value="dispatched">Dispatched</option>
+                  <option value="delivered">Delivered</option>
+                  <option value="cancelled">Cancelled</option>
                 </select>
                 <select
                   value={paymentStatus}
@@ -180,9 +181,12 @@ export default function OrdersAdminPage() {
                   className="bg-[#17201c] px-2 py-1.5 text-xs"
                 >
                   <option value="">All payments</option>
-                  <option value="unpaid">unpaid</option>
-                  <option value="paid">paid</option>
-                  <option value="partially_paid">partially_paid</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="paid">Paid</option>
+                  <option value="partially_paid">Partially paid</option>
+                  <option value="pending_verification">
+                    Pending verification
+                  </option>
                 </select>
                 <label className="flex items-center gap-1.5 text-xs text-[#9eb0a6]">
                   <input
@@ -221,7 +225,8 @@ export default function OrdersAdminPage() {
                           : ""}
                       </span>
                       <span className="mt-0.5 block text-[11px] text-[#9eb0a6]">
-                        {o.itemCount} items · {o.status} / {o.paymentStatus}
+                        {o.itemCount} items · {formatLabel(o.status)} /{" "}
+                        {formatLabel(o.paymentStatus)}
                         {o.deliveryStatus
                           ? ` · delivery ${o.deliveryStatus}`
                           : ""}
@@ -252,7 +257,8 @@ export default function OrdersAdminPage() {
                 <div>
                   <h2 className="text-xl">{detail.orderNumber}</h2>
                   <p className="text-xs text-[#8aa897]">
-                    {detail.status} · payment {detail.paymentStatus}
+                    {formatLabel(detail.status)} · payment{" "}
+                    {formatLabel(detail.paymentStatus)}
                     {detail.isGuest ? " · guest" : ""}
                     {detail.requiresManualContact
                       ? " · needs manual contact"
@@ -349,8 +355,8 @@ export default function OrdersAdminPage() {
                     )}
                     {(detail.notifications ?? []).map((n) => (
                       <li key={n.id}>
-                        {n.eventCode} · {n.channel} · {n.status} ·{" "}
-                        {n.destinationMasked}
+                        {formatLabel(n.eventCode)} · {formatLabel(n.channel)} ·{" "}
+                        {formatLabel(n.status)} · {n.destinationMasked}
                         {n.lastError ? ` (${n.lastError})` : ""}
                         {n.whatsappDeepLink ? (
                           <>
@@ -426,7 +432,7 @@ export default function OrdersAdminPage() {
                   <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-[11px] text-[#9eb0a6]">
                     {(detail.contactAttempts ?? []).map((a) => (
                       <li key={a.id}>
-                        {a.channel} · {a.outcome}
+                        {formatLabel(a.channel)} · {formatLabel(a.outcome)}
                         {a.attemptedByName ? ` · ${a.attemptedByName}` : ""}
                         {a.notes ? ` — ${a.notes}` : ""}
                       </li>
@@ -440,8 +446,9 @@ export default function OrdersAdminPage() {
                     {detail.payments.length === 0 && <li>No payment intents</li>}
                     {detail.payments.map((p) => (
                       <li key={p.intentId}>
-                        {p.methodCode ?? "method"} · intent {p.intentStatus} ·
-                        tx {p.transactionStatus ?? "—"} · {p.amount}
+                        {formatLabel(p.methodCode ?? "method")} · intent{" "}
+                        {formatLabel(p.intentStatus)} · tx{" "}
+                        {formatLabel(p.transactionStatus)} · {p.amount}
                       </li>
                     ))}
                   </ul>
@@ -463,7 +470,7 @@ export default function OrdersAdminPage() {
                     )}
                     {detail.deliveries.map((d) => (
                       <li key={d.id}>
-                        {d.deliveryNumber} · {d.status}
+                        {d.deliveryNumber} · {formatLabel(d.status)}
                       </li>
                     ))}
                   </ul>
@@ -485,14 +492,14 @@ export default function OrdersAdminPage() {
                       onChange={(e) => setNextStatus(e.target.value)}
                       className="bg-[#17201c] px-3 py-2 text-sm"
                     >
-                      <option value="confirmed">confirmed</option>
-                      <option value="processing">processing</option>
+                      <option value="confirmed">Confirmed</option>
+                      <option value="processing">Processing</option>
                       <option value="ready_for_dispatch">
-                        ready_for_dispatch
+                        Ready for dispatch
                       </option>
-                      <option value="dispatched">dispatched</option>
-                      <option value="delivered">delivered</option>
-                      <option value="cancelled">cancelled</option>
+                      <option value="dispatched">Dispatched</option>
+                      <option value="delivered">Delivered</option>
+                      <option value="cancelled">Cancelled</option>
                     </select>
                     <button
                       type="button"
@@ -509,8 +516,8 @@ export default function OrdersAdminPage() {
                   <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto text-[11px] text-[#9eb0a6]">
                     {detail.history.map((h, i) => (
                       <li key={i}>
-                        {h.fromStatus ?? "—"} → {h.toStatus}
-                        {h.reason ? ` (${h.reason})` : ""}
+                        {formatLabel(h.fromStatus)} → {formatLabel(h.toStatus)}
+                        {h.reason ? ` (${formatLabel(h.reason)})` : ""}
                       </li>
                     ))}
                   </ul>

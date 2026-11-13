@@ -5,6 +5,7 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "../../../lib/api";
 import { formatEtb } from "../../../lib/money";
+import { formatLabel } from "../../../lib/format";
 
 function TrackInner() {
   const router = useRouter();
@@ -158,7 +159,8 @@ function TrackInner() {
           {data.orderNumber}
         </h1>
         <p className="mt-2 text-sabu-moss">
-          Status: {data.status} · Payment: {data.paymentStatus}
+          Status: {formatLabel(data.status)} · Payment:{" "}
+          {formatLabel(data.paymentStatus)}
         </p>
         {data.recipientName && (
           <p className="mt-1 text-sm text-sabu-ink">{data.recipientName}</p>
@@ -178,7 +180,7 @@ function TrackInner() {
           <div className="mt-3 space-y-1 text-sm text-sabu-moss">
             {data.deliveryServiceType && (
               <p className="capitalize">
-                Delivery service: {data.deliveryServiceType}
+                Delivery service: {formatLabel(data.deliveryServiceType)}
               </p>
             )}
             {data.deliveryEtaWindowText && (
@@ -203,7 +205,7 @@ function TrackInner() {
               Delivery {delivery.deliveryNumber}
             </p>
             <p className="mt-1 text-sm text-sabu-ink">
-              Status: {delivery.status}
+              Status: {formatLabel(delivery.status)}
               {delivery.etaMinutes != null
                 ? ` · estimated ~${delivery.etaMinutes} min`
                 : ""}

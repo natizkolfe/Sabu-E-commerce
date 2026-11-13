@@ -3,6 +3,8 @@
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { formatLabel } from "../../../lib/format";
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
   "http://localhost:3001/v1";
@@ -142,7 +144,7 @@ function DeliveryInner() {
       </p>
       <h1 className="mt-2 text-2xl">#{data.orderNumber}</h1>
       <p className="text-sm text-[#9eb0a6]">
-        {data.deliveryNumber} · {data.deliveryStatus}
+        {data.deliveryNumber} · {formatLabel(data.deliveryStatus)}
         {data.verified ? " · verified" : ""}
       </p>
 

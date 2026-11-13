@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 export default function SpecialOrdersPage() {
@@ -118,7 +119,8 @@ export default function SpecialOrdersPage() {
                   {o.requestNumber} · {o.productName}
                 </p>
                 <p className="text-xs text-[#9eb0a6]">
-                  {o.sourcingRegionName} ({o.sourcingRegion}) · {o.status} · qty{" "}
+                  {o.sourcingRegionName} ({o.sourcingRegion}) ·{" "}
+                  {formatLabel(o.status)} · qty{" "}
                   {o.quantity} · {o.imageCount} image(s)
                 </p>
                 <p className="text-xs text-[#8aa897]">

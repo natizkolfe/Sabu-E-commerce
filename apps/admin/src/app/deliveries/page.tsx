@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminApi, ApiError, type DeliveryAdminDetail } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 type QueueItem = Awaited<ReturnType<typeof adminApi.deliveryQueue>>[number];
@@ -295,8 +296,8 @@ export default function DeliveriesAdminPage() {
                           {o.recipientName} · {o.address}
                         </p>
                         <p className="mt-1 text-xs text-[#b7c7be]">
-                          {o.itemCount} items · {o.orderStatus} /{" "}
-                          {o.deliveryStatus ?? "no delivery"}
+                          {o.itemCount} items · {formatLabel(o.orderStatus)} /{" "}
+                          {formatLabel(o.deliveryStatus ?? "no delivery")}
                         </p>
                       </div>
                       <button
@@ -332,7 +333,7 @@ export default function DeliveriesAdminPage() {
                   <h2 className="text-xl">Delivery Details</h2>
                   <p className="text-xs text-[#8aa897]">
                     {detail.deliveryNumber} · order {detail.orderNumber} ·{" "}
-                    {detail.status}
+                    {formatLabel(detail.status)}
                   </p>
                 </div>
 
@@ -438,7 +439,7 @@ export default function DeliveriesAdminPage() {
                     <p className="mt-1 text-xs text-[#b7c7be]">
                       Current: {detail.assignedDriver.name} ·{" "}
                       {detail.assignedDriver.phone || "no phone"} ·{" "}
-                      {detail.assignedDriver.assignmentStatus}
+                      {formatLabel(detail.assignedDriver.assignmentStatus)}
                     </p>
                   )}
                   <select
@@ -492,7 +493,7 @@ export default function DeliveriesAdminPage() {
                     <ul className="mt-2 space-y-1 text-xs">
                       {(detail.assignments ?? detail.offers ?? []).map((o) => (
                         <li key={o.id} className="text-[#b7c7be]">
-                          {o.driverName} · {o.status}
+                          {o.driverName} · {formatLabel(o.status)}
                           {"assignedByName" in o && o.assignedByName
                             ? ` · by ${o.assignedByName}`
                             : ""}

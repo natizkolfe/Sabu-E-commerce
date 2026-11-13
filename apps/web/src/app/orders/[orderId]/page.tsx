@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../context/auth-context";
 import { formatEtb } from "../../../lib/money";
+import { formatLabel } from "../../../lib/format";
 
 type OrderDetail = Awaited<ReturnType<typeof api.getOrder>>;
 
@@ -54,8 +55,12 @@ export default function OrderConfirmationPage() {
           {detail.orderNumber}
         </h1>
         <p className="mt-3 text-sabu-moss">
-          Status: <span className="text-sabu-ink">{detail.status}</span> · Payment:{" "}
-          <span className="text-sabu-ink">{detail.paymentStatus}</span>
+          Status:{" "}
+          <span className="text-sabu-ink">{formatLabel(detail.status)}</span> ·
+          Payment:{" "}
+          <span className="text-sabu-ink">
+            {formatLabel(detail.paymentStatus)}
+          </span>
         </p>
 
         <ul className="mt-10 space-y-3 border-t border-sabu-mist/50 pt-6 text-sm">

@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { formatLabel } from "../../../lib/format";
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
   "http://localhost:3001/v1";
@@ -90,7 +92,7 @@ function OfferInner() {
         </button>
       ) : (
         <p className="mt-6 text-sm text-[#8aa897]">
-          This link is not an active assignment ({offer.status}).
+          This link is not an active assignment ({formatLabel(offer.status)}).
         </p>
       )}
     </main>

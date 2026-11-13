@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 type Driver = Awaited<ReturnType<typeof adminApi.deliveryDrivers>>[number];
@@ -228,7 +229,7 @@ export default function DriversAdminPage() {
                         {d.activeDeliveries}
                       </p>
                       <p className="mt-1 text-[11px] text-[#8aa897]">
-                        {d.status} · {d.availability} ·{" "}
+                        {formatLabel(d.status)} · {formatLabel(d.availability)} ·{" "}
                         {d.employmentType ?? "—"}
                       </p>
                     </div>

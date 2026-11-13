@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { loadSession } from "../../lib/session";
 
 export default function ReceiptsPage() {
@@ -87,7 +88,7 @@ export default function ReceiptsPage() {
                   <span className="text-right">
                     {r.grandTotal.toLocaleString()} {r.currency}
                     <span className="mt-0.5 block text-xs text-[#8aa897]">
-                      {r.paymentStatus}
+                      {formatLabel(r.paymentStatus)}
                     </span>
                   </span>
                 </button>
@@ -166,7 +167,7 @@ export default function ReceiptsPage() {
                 </div>
                 <p className="text-[11px] text-[#8aa897]">
                   Payment: {selected.paymentMethodCode ?? "—"} ·{" "}
-                  {selected.paymentStatus}
+                  {formatLabel(selected.paymentStatus)}
                 </p>
               </div>
             )}

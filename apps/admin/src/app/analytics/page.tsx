@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { adminApi, ApiError } from "../../lib/api";
+import { formatLabel } from "../../lib/format";
 import { clearSession, loadSession } from "../../lib/session";
 
 type Dash = Awaited<ReturnType<typeof adminApi.analyticsDashboard>>;
@@ -725,7 +726,7 @@ export default function AnalyticsDashboardPage() {
               <ul className="mt-3 max-h-36 space-y-1 overflow-y-auto text-xs text-[#b7c7be]">
                 {data.charts.ordersByStatus.map((s) => (
                   <li key={s.status} className="flex justify-between gap-2">
-                    <span>{s.status}</span>
+                    <span>{formatLabel(s.status)}</span>
                     <span>{s.count}</span>
                   </li>
                 ))}
@@ -1011,7 +1012,7 @@ function OrderTableRow({
         <StatusPill value={o.qaStatus} />
       </td>
       <td className="px-2 py-2">
-        <div>{o.deliveryStatus ?? "awaiting"}</div>
+        <div>{formatLabel(o.deliveryStatus ?? "awaiting")}</div>
         <div className="text-[#8aa897]">{o.assignedDriver ?? "—"}</div>
       </td>
       <td className="px-2 py-2">
@@ -1030,7 +1031,7 @@ function OrderTableRow({
 function StatusPill({ value }: { value: string }) {
   return (
     <span className="inline-block border border-[#24302a] px-1.5 py-0.5 text-[10px] text-[#b7c7be]">
-      {value}
+      {formatLabel(value)}
     </span>
   );
 }
@@ -1136,8 +1137,9 @@ function OrderReviewPanel({
       <div>
         <h2 className="text-xl">{detail.orderNumber}</h2>
         <p className="text-xs text-[#8aa897]">
-          {detail.status} · pay {detail.paymentStatus} · approval{" "}
-          {detail.approvalStatus ?? "—"} · QA {detail.qaStatus ?? "—"}
+          {formatLabel(detail.status)} · pay {formatLabel(detail.paymentStatus)}{" "}
+          · approval {formatLabel(detail.approvalStatus)} · QA{" "}
+          {formatLabel(detail.qaStatus)}
         </p>
       </div>
 
@@ -1195,7 +1197,8 @@ function OrderReviewPanel({
         </div>
         {(detail.payments ?? []).length === 0 && (
           <p className="mt-1 text-[#b7c7be]">
-            No payment submission on file yet · status {detail.paymentStatus}
+            No payment submission on file yet · status{" "}
+            {formatLabel(detail.paymentStatus)}
           </p>
         )}
         {(detail.payments ?? []).map((p) => {
@@ -1400,8 +1403,8 @@ function OrderReviewPanel({
           <ul className="mt-1 max-h-28 space-y-1 overflow-y-auto text-[11px] text-[#b7c7be]">
             {detail.history.map((h, idx) => (
               <li key={idx}>
-                {h.fromStatus ?? "—"} → {h.toStatus}
-                {h.reason ? ` · ${h.reason}` : ""} ·{" "}
+                {formatLabel(h.fromStatus)} → {formatLabel(h.toStatus)}
+                {h.reason ? ` · ${formatLabel(h.reason)}` : ""} ·{" "}
                 {new Date(h.changedAt).toLocaleString()}
               </li>
             ))}
