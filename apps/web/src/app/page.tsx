@@ -79,11 +79,12 @@ export default function Home() {
             Can’t find it? We’ll source it.
           </h2>
           <p className="mt-4 max-w-lg text-sabu-moss">
-            Special orders move through quotation, Dubai procurement, and
-            international logistics — then local delivery in Ethiopia.
+            Can&apos;t find what you&apos;re looking for? Request a special
+            order from Dubai, China, or the USA, and our team will help you find
+            it.
           </p>
           <Link
-            href="/login"
+            href="/special-orders"
             className="mt-8 inline-block border-b border-sabu-leaf pb-1 text-sm font-medium text-sabu-leaf transition hover:border-sabu-ink hover:text-sabu-ink"
           >
             Start with your phone number

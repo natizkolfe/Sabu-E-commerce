@@ -677,4 +677,52 @@ export const api = {
       }>;
     }>(`/sales/orders/${orderId}`, { token });
   },
+
+  uploadSpecialOrderImage(body: {
+    data: string;
+    mimeType?: string;
+  }) {
+    return request<{
+      storageKey: string;
+      mime: string;
+      size: number;
+      url: string;
+    }>("/media/upload/special-order", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  createSpecialOrder(body: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    sourcingRegionCode: "US" | "CN" | "AE-DXB";
+    productName: string;
+    description: string;
+    quantity?: number;
+    preferredContactChannel?: "whatsapp" | "telegram" | "phone";
+    productUrl?: string;
+    customerInstructions?: string;
+    imageStorageKeys: string[];
+    imageMimeTypes?: string[];
+    imageSizes?: number[];
+  }) {
+    return request<{
+      id: string;
+      requestNumber: string;
+      status: string;
+      statusLabel: string;
+      productName: string;
+      guestName: string;
+      sourcingRegion: string;
+      sourcingRegionName: string;
+      quantity: number;
+      submittedAt: string;
+      message: string;
+    }>("/procurement/special-orders", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
 };

@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PoolClient } from 'pg';
+import { normalizeEthiopianPhone } from '../../common/phone';
 import { DatabaseService } from '../../database/database.service';
 import type { AuthUser } from '../iam/auth.types';
 
@@ -59,8 +60,12 @@ export class ProcurementService {
       id: string;
       request_number: string;
       product_name: string;
+      description: string | null;
       status: string;
       quantity: number;
+      product_url: string | null;
+      customer_instructions: string | null;
+      preferred_contact_channel: string | null;
       guest_first_name: string | null;
       guest_last_name: string | null;
       guest_phone_e164: string | null;
@@ -69,7 +74,9 @@ export class ProcurementService {
       created_at: Date;
       image_count: string;
     }>(
-      `SELECT r.id, r.request_number, r.product_name, r.status, r.quantity,
+      `SELECT r.id, r.request_number, r.product_name, r.description, r.status,
+              r.quantity, r.product_url, r.customer_instructions,
+              r.preferred_contact_channel,
               r.guest_first_name, r.guest_last_name, r.guest_phone_e164,
               reg.code AS region_code, reg.name AS region_name, r.created_at,
               (SELECT count(*)::text FROM procurement.special_order_attachments a
@@ -85,8 +92,13 @@ export class ProcurementService {
       id: r.id,
       requestNumber: r.request_number,
       productName: r.product_name,
+      description: r.description,
       status: r.status,
+      statusLabel: specialOrderStatusLabel(r.status),
       quantity: r.quantity,
+      productUrl: r.product_url,
+      customerInstructions: r.customer_instructions,
+      preferredContactChannel: r.preferred_contact_channel,
       guestName: [r.guest_first_name, r.guest_last_name]
         .filter(Boolean)
         .join(' '),
@@ -98,6 +110,146 @@ export class ProcurementService {
     }));
   }
 
+  async getSpecialOrder(id: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      request_number: string;
+      product_name: string;
+      description: string | null;
+      status: string;
+      quantity: number;
+      product_url: string | null;
+      customer_instructions: string | null;
+      preferred_contact_channel: string | null;
+      guest_first_name: string | null;
+      guest_last_name: string | null;
+      guest_phone_e164: string | null;
+      region_code: string;
+      region_name: string;
+      created_at: Date;
+    }>(
+      `SELECT r.id, r.request_number, r.product_name, r.description, r.status,
+              r.quantity, r.product_url, r.customer_instructions,
+              r.preferred_contact_channel,
+              r.guest_first_name, r.guest_last_name, r.guest_phone_e164,
+              reg.code AS region_code, reg.name AS region_name, r.created_at
+       FROM procurement.special_order_requests r
+       JOIN core.operating_regions reg ON reg.id = r.sourcing_region_id
+       WHERE r.id = $1`,
+      [id],
+    );
+    if (!rows[0]) throw new NotFoundException('Special order not found');
+    const r = rows[0];
+
+    const { rows: images } = await this.db.query<{
+      id: string;
+      storage_key: string;
+      mime_type: string;
+      size_bytes: number;
+    }>(
+      `SELECT id, storage_key, mime_type, size_bytes
+       FROM procurement.special_order_attachments
+       WHERE request_id = $1 ORDER BY created_at`,
+      [id],
+    );
+
+    const { rows: history } = await this.db.query<{
+      id: string;
+      from_status: string | null;
+      to_status: string;
+      note: string | null;
+      changed_at: Date;
+    }>(
+      `SELECT id::text, from_status, to_status, note, changed_at
+       FROM procurement.special_order_status_history
+       WHERE request_id = $1 ORDER BY changed_at DESC`,
+      [id],
+    );
+
+    return {
+      id: r.id,
+      requestNumber: r.request_number,
+      productName: r.product_name,
+      description: r.description,
+      status: r.status,
+      statusLabel: specialOrderStatusLabel(r.status),
+      quantity: r.quantity,
+      productUrl: r.product_url,
+      customerInstructions: r.customer_instructions,
+      preferredContactChannel: r.preferred_contact_channel,
+      guestFirstName: r.guest_first_name,
+      guestLastName: r.guest_last_name,
+      guestName: [r.guest_first_name, r.guest_last_name]
+        .filter(Boolean)
+        .join(' '),
+      guestPhone: r.guest_phone_e164,
+      sourcingRegion: r.region_code,
+      sourcingRegionName: r.region_name,
+      createdAt: r.created_at,
+      images: images.map((img) => ({
+        id: img.id,
+        storageKey: img.storage_key,
+        mimeType: img.mime_type,
+        sizeBytes: img.size_bytes,
+        url: `/media/file?key=${encodeURIComponent(img.storage_key)}`,
+      })),
+      history: history.map((h) => ({
+        id: h.id,
+        fromStatus: h.from_status,
+        toStatus: h.to_status,
+        toStatusLabel: specialOrderStatusLabel(h.to_status),
+        note: h.note,
+        changedAt: h.changed_at,
+      })),
+      copyText: buildSpecialOrderCopyText({
+        requestNumber: r.request_number,
+        guestName: [r.guest_first_name, r.guest_last_name]
+          .filter(Boolean)
+          .join(' '),
+        guestPhone: r.guest_phone_e164,
+        preferredContactChannel: r.preferred_contact_channel,
+        productName: r.product_name,
+        description: r.description,
+        quantity: r.quantity,
+        sourcingRegionName: r.region_name,
+        productUrl: r.product_url,
+        customerInstructions: r.customer_instructions,
+        statusLabel: specialOrderStatusLabel(r.status),
+      }),
+    };
+  }
+
+  async updateSpecialOrderStatus(
+    user: AuthUser,
+    id: string,
+    status: string,
+    note?: string,
+  ) {
+    if (!SPECIAL_ORDER_STATUSES.includes(status as (typeof SPECIAL_ORDER_STATUSES)[number])) {
+      throw new BadRequestException(`Invalid status: ${status}`);
+    }
+    const { rows } = await this.db.query<{ id: string; status: string }>(
+      `SELECT id, status FROM procurement.special_order_requests WHERE id = $1`,
+      [id],
+    );
+    if (!rows[0]) throw new NotFoundException('Special order not found');
+    const from = rows[0].status;
+    if (from === status) return this.getSpecialOrder(id);
+
+    await this.db.query(
+      `UPDATE procurement.special_order_requests
+       SET status = $2, updated_at = now() WHERE id = $1`,
+      [id, status],
+    );
+    await this.db.query(
+      `INSERT INTO procurement.special_order_status_history
+         (request_id, from_status, to_status, note, changed_by, is_customer_visible)
+       VALUES ($1,$2,$3,$4,$5,true)`,
+      [id, from, status, note ?? 'Admin status update', user.id],
+    );
+    return this.getSpecialOrder(id);
+  }
+
   async createSpecialOrder(body: {
     firstName: string;
     lastName: string;
@@ -107,14 +259,20 @@ export class ProcurementService {
     description: string;
     quantity?: number;
     preferredContactChannel?: string;
+    productUrl?: string;
+    customerInstructions?: string;
     imageStorageKeys: string[];
     imageMimeTypes?: string[];
+    imageSizes?: number[];
   }) {
     if (!body.firstName?.trim() || !body.lastName?.trim()) {
       throw new BadRequestException('First and last name are required');
     }
-    if (!/^\+[1-9][0-9]{7,14}$/.test(body.phone)) {
-      throw new BadRequestException('Phone must be E.164');
+    const phone = normalizeEthiopianPhone(body.phone);
+    if (!phone) {
+      throw new BadRequestException(
+        'Please enter a valid Ethiopian phone number, such as 911123456.',
+      );
     }
     if (!body.productName?.trim() || !body.description?.trim()) {
       throw new BadRequestException('Product name and description required');
@@ -124,13 +282,27 @@ export class ProcurementService {
         'At least one product reference image is required',
       );
     }
+    const channel = body.preferredContactChannel ?? 'whatsapp';
+    if (!['whatsapp', 'telegram', 'phone'].includes(channel)) {
+      throw new BadRequestException('Invalid preferred communication method');
+    }
+    if (body.productUrl?.trim()) {
+      try {
+        const u = new URL(body.productUrl.trim());
+        if (!['http:', 'https:'].includes(u.protocol)) {
+          throw new Error('bad protocol');
+        }
+      } catch {
+        throw new BadRequestException('Product website link must be a valid URL');
+      }
+    }
 
-    const { rows: regions } = await this.db.query<{ id: string }>(
-      `SELECT id FROM core.operating_regions WHERE code = $1 AND is_active`,
+    const { rows: regions } = await this.db.query<{ id: string; name: string }>(
+      `SELECT id, name FROM core.operating_regions WHERE code = $1 AND is_active`,
       [body.sourcingRegionCode],
     );
     if (!regions[0]) {
-      throw new BadRequestException('Invalid sourcing region');
+      throw new BadRequestException('Please select Dubai, China, or USA');
     }
 
     const client = await this.db.getPool().connect();
@@ -138,19 +310,20 @@ export class ProcurementService {
       await client.query('BEGIN');
       const customerId = await this.upsertGuestCustomer(
         client,
-        body.phone,
+        phone,
         body.firstName,
         body.lastName,
       );
       const requestNumber = await this.nextDocNumber(client, 'SR');
+      const qty = Math.max(1, Math.floor(Number(body.quantity) || 1));
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO procurement.special_order_requests (
            request_number, customer_id, sourcing_region_id, product_name,
-           description, quantity, status,
+           description, quantity, status, product_url, customer_instructions,
            guest_first_name, guest_last_name, guest_phone_e164,
            preferred_contact_channel
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,'submitted',$7,$8,$9,$10
+           $1,$2,$3,$4,$5,$6,'submitted',$7,$8,$9,$10,$11,$12
          ) RETURNING id`,
         [
           requestNumber,
@@ -158,11 +331,13 @@ export class ProcurementService {
           regions[0].id,
           body.productName.trim(),
           body.description.trim(),
-          body.quantity ?? 1,
+          qty,
+          body.productUrl?.trim() || null,
+          body.customerInstructions?.trim() || null,
           body.firstName.trim(),
           body.lastName.trim(),
-          body.phone,
-          body.preferredContactChannel ?? 'whatsapp',
+          phone,
+          channel,
         ],
       );
       const requestId = rows[0].id;
@@ -177,14 +352,22 @@ export class ProcurementService {
       let i = 0;
       for (const key of body.imageStorageKeys) {
         const mime = body.imageMimeTypes?.[i] ?? 'image/jpeg';
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
-          throw new BadRequestException(`Unsupported image type: ${mime}`);
+        if (!['image/jpeg', 'image/png'].includes(mime)) {
+          throw new BadRequestException(
+            'Please upload an image in JPG, JPEG, or PNG format.',
+          );
+        }
+        const size = Math.max(1, Number(body.imageSizes?.[i] ?? 1));
+        if (size > 1024 * 1024) {
+          throw new BadRequestException(
+            'Your image must be less than 1 MB. Please select a smaller image.',
+          );
         }
         await client.query(
           `INSERT INTO procurement.special_order_attachments (
              request_id, storage_key, mime_type, size_bytes, scan_status, uploaded_by
-           ) VALUES ($1,$2,$3,1,'pending',NULL)`,
-          [requestId, key, mime],
+           ) VALUES ($1,$2,$3,$4,'pending',NULL)`,
+          [requestId, key, mime, size],
         );
         i += 1;
       }
@@ -197,9 +380,9 @@ export class ProcurementService {
           JSON.stringify({
             requestId,
             requestNumber,
-            phone: body.phone,
+            phone,
             sourcingRegion: body.sourcingRegionCode,
-            preferredContactChannel: body.preferredContactChannel ?? 'whatsapp',
+            preferredContactChannel: channel,
           }),
         ],
       );
@@ -209,8 +392,15 @@ export class ProcurementService {
         id: requestId,
         requestNumber,
         status: 'submitted',
+        statusLabel: specialOrderStatusLabel('submitted'),
+        productName: body.productName.trim(),
+        guestName: `${body.firstName.trim()} ${body.lastName.trim()}`.trim(),
+        sourcingRegion: body.sourcingRegionCode,
+        sourcingRegionName: regions[0].name,
+        quantity: qty,
+        submittedAt: new Date().toISOString(),
         message:
-          'Special order received. Our team will review and contact you.',
+          'Thank you for submitting your special order request!',
       };
     } catch (err) {
       try {
@@ -229,8 +419,12 @@ export class ProcurementService {
     requestId: string,
     supplierId: string,
   ) {
-    const { rows: req } = await this.db.query<{ id: string; request_number: string }>(
-      `SELECT id, request_number FROM procurement.special_order_requests WHERE id = $1`,
+    const { rows: req } = await this.db.query<{
+      id: string;
+      request_number: string;
+      status: string;
+    }>(
+      `SELECT id, request_number, status FROM procurement.special_order_requests WHERE id = $1`,
       [requestId],
     );
     if (!req[0]) throw new NotFoundException('Special order not found');
@@ -254,22 +448,26 @@ export class ProcurementService {
       [requestId, supplierId, user.id],
     );
 
+    const fromStatus = req[0].status;
     await this.db.query(
       `UPDATE procurement.special_order_requests
        SET status = 'sourcing', supplier_id = $2, updated_at = now()
        WHERE id = $1`,
       [requestId, supplierId],
     );
-    await this.db.query(
-      `INSERT INTO procurement.special_order_status_history
-         (request_id, from_status, to_status, note, changed_by)
-       VALUES ($1, 'submitted', 'sourcing', $2, $3)`,
-      [
-        requestId,
-        `Assigned to partner ${supplier[0].name}`,
-        user.id,
-      ],
-    );
+    if (fromStatus !== 'sourcing') {
+      await this.db.query(
+        `INSERT INTO procurement.special_order_status_history
+           (request_id, from_status, to_status, note, changed_by, is_customer_visible)
+         VALUES ($1, $2, 'sourcing', $3, $4, true)`,
+        [
+          requestId,
+          fromStatus,
+          `Assigned to partner ${supplier[0].name}`,
+          user.id,
+        ],
+      );
+    }
 
     await this.db.query(
       `INSERT INTO core.outbox_events (aggregate_type, aggregate_id, event_type, payload)
@@ -332,4 +530,91 @@ export class ProcurementService {
     );
     return `${docType}-${period}-${String(Number(rows[0].next_value)).padStart(6, '0')}`;
   }
+}
+
+export const SPECIAL_ORDER_STATUSES = [
+  'submitted',
+  'under_review',
+  'searching_for_product',
+  'sourcing',
+  'product_found',
+  'quotation_sent',
+  'quotation_prepared',
+  'awaiting_customer_confirmation',
+  'awaiting_customer_approval',
+  'awaiting_payment',
+  'payment_verification_pending',
+  'payment_confirmed',
+  'purchased',
+  'purchasing',
+  'shipped',
+  'in_transit',
+  'arrived_in_ethiopia',
+  'arrived_ethiopia',
+  'ready_for_delivery',
+  'delivered',
+  'product_unavailable',
+  'unavailable',
+  'cancelled',
+] as const;
+
+export function specialOrderStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    submitted: 'Request Received',
+    under_review: 'Under Review',
+    searching_for_product: 'Searching for Product',
+    sourcing: 'Searching for Product',
+    product_found: 'Product Found',
+    quotation_sent: 'Quotation Sent',
+    quotation_prepared: 'Quotation Sent',
+    awaiting_customer_confirmation: 'Awaiting Customer Confirmation',
+    awaiting_customer_approval: 'Awaiting Customer Confirmation',
+    awaiting_payment: 'Awaiting Payment',
+    payment_verification_pending: 'Payment Verification Pending',
+    payment_confirmed: 'Payment Confirmed',
+    purchased: 'Purchased',
+    purchasing: 'Purchased',
+    shipped: 'Shipped',
+    in_transit: 'Shipped',
+    arrived_in_ethiopia: 'Arrived in Ethiopia',
+    arrived_ethiopia: 'Arrived in Ethiopia',
+    ready_for_delivery: 'Ready for Delivery',
+    delivered: 'Delivered',
+    product_unavailable: 'Product Unavailable',
+    unavailable: 'Product Unavailable',
+    cancelled: 'Cancelled',
+  };
+  return map[status] ?? status.replace(/_/g, ' ');
+}
+
+function buildSpecialOrderCopyText(input: {
+  requestNumber: string;
+  guestName: string;
+  guestPhone: string | null;
+  preferredContactChannel: string | null;
+  productName: string;
+  description: string | null;
+  quantity: number;
+  sourcingRegionName: string;
+  productUrl: string | null;
+  customerInstructions: string | null;
+  statusLabel: string;
+}) {
+  return [
+    `Special Order ${input.requestNumber}`,
+    `Status: ${input.statusLabel}`,
+    `Customer: ${input.guestName}`,
+    `Phone: ${input.guestPhone ?? '—'}`,
+    `Preferred contact: ${input.preferredContactChannel ?? '—'}`,
+    `Country: ${input.sourcingRegionName}`,
+    `Product: ${input.productName}`,
+    `Qty: ${input.quantity}`,
+    `Description: ${input.description ?? '—'}`,
+    input.productUrl ? `Link: ${input.productUrl}` : null,
+    input.customerInstructions
+      ? `Instructions: ${input.customerInstructions}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

@@ -43,6 +43,22 @@ export class MediaController {
     };
   }
 
+  /** Guest special-order reference image (max 1 MB, JPG/PNG only). */
+  @Public()
+  @Post('upload/special-order')
+  async uploadSpecialOrder(@Body() dto: UploadDto) {
+    const saved = await this.media.saveDataUrl(dto.data, {
+      folder: 'special-orders',
+      mimeHint: dto.mimeType,
+      maxBytes: 1024 * 1024,
+      allowedMimes: ['image/jpeg', 'image/png'],
+    });
+    return {
+      ...saved,
+      url: `/media/file?key=${encodeURIComponent(saved.storageKey)}`,
+    };
+  }
+
   @Public()
   @Get('file')
   async serve(@Query('key') key: string, @Res() res: Response) {

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
@@ -32,8 +40,11 @@ export class ProcurementController {
       description: string;
       quantity?: number;
       preferredContactChannel?: string;
+      productUrl?: string;
+      customerInstructions?: string;
       imageStorageKeys: string[];
       imageMimeTypes?: string[];
+      imageSizes?: number[];
     },
   ) {
     return this.procurementService.createSpecialOrder(body);
@@ -49,6 +60,27 @@ export class ProcurementController {
       status,
       limit: limit ? Number(limit) : undefined,
     });
+  }
+
+  @Get('admin/special-orders/:id')
+  @RequirePermissions('special_orders.read')
+  getSpecialOrder(@Param('id') id: string) {
+    return this.procurementService.getSpecialOrder(id);
+  }
+
+  @Patch('admin/special-orders/:id/status')
+  @RequirePermissions('special_orders.write')
+  updateStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { status: string; note?: string },
+  ) {
+    return this.procurementService.updateSpecialOrderStatus(
+      user,
+      id,
+      body.status,
+      body.note,
+    );
   }
 
   @Get('admin/partners')

@@ -37,7 +37,13 @@ export class MediaService {
    */
   async saveDataUrl(
     dataUrlOrBase64: string,
-    opts: { folder: string; mimeHint?: string; originalName?: string },
+    opts: {
+      folder: string;
+      mimeHint?: string;
+      originalName?: string;
+      maxBytes?: number;
+      allowedMimes?: string[];
+    },
   ) {
     await this.ensureRoot();
     let mime = opts.mimeHint ?? 'image/jpeg';
@@ -49,10 +55,17 @@ export class MediaService {
       b64 = dataUrlMatch[2];
     }
 
+    if (opts.allowedMimes?.length && !opts.allowedMimes.includes(mime)) {
+      throw new BadRequestException(
+        'Please upload an image in JPG, JPEG, or PNG format.',
+      );
+    }
     const ext = ALLOWED_MIME[mime];
     if (!ext) {
       throw new BadRequestException(
-        `Unsupported image type ${mime}. Use jpeg, png, webp, gif, or svg.`,
+        opts.allowedMimes?.length
+          ? 'Please upload an image in JPG, JPEG, or PNG format.'
+          : `Unsupported image type ${mime}. Use jpeg, png, webp, gif, or svg.`,
       );
     }
 
@@ -63,8 +76,13 @@ export class MediaService {
       throw new BadRequestException('Invalid base64 image payload');
     }
     if (!buffer.length) throw new BadRequestException('Empty image payload');
-    if (buffer.length > 8 * 1024 * 1024) {
-      throw new BadRequestException('Image too large (max 8MB)');
+    const maxBytes = opts.maxBytes ?? 8 * 1024 * 1024;
+    if (buffer.length > maxBytes) {
+      throw new BadRequestException(
+        maxBytes <= 1024 * 1024
+          ? 'Your image must be less than 1 MB. Please select a smaller image.'
+          : `Image too large (max ${Math.round(maxBytes / (1024 * 1024))}MB)`,
+      );
     }
 
     const folder = opts.folder.replace(/[^a-zA-Z0-9/_-]/g, '').replace(/^\/+|\/+$/g, '');

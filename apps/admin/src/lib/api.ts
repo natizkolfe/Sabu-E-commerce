@@ -1547,8 +1547,13 @@ export const adminApi = {
         id: string;
         requestNumber: string;
         productName: string;
+        description: string | null;
         status: string;
+        statusLabel: string;
         quantity: number;
+        productUrl: string | null;
+        customerInstructions: string | null;
+        preferredContactChannel: string | null;
         guestName: string;
         guestPhone: string | null;
         sourcingRegion: string;
@@ -1557,6 +1562,56 @@ export const adminApi = {
         createdAt: string;
       }>
     >(`/procurement/admin/special-orders${qs}`, { token });
+  },
+
+  getSpecialOrder(token: string, id: string) {
+    return request<{
+      id: string;
+      requestNumber: string;
+      productName: string;
+      description: string | null;
+      status: string;
+      statusLabel: string;
+      quantity: number;
+      productUrl: string | null;
+      customerInstructions: string | null;
+      preferredContactChannel: string | null;
+      guestFirstName: string | null;
+      guestLastName: string | null;
+      guestName: string;
+      guestPhone: string | null;
+      sourcingRegion: string;
+      sourcingRegionName: string;
+      createdAt: string;
+      images: Array<{
+        id: string;
+        storageKey: string;
+        mimeType: string;
+        sizeBytes: number;
+        url: string;
+      }>;
+      history: Array<{
+        id: string;
+        fromStatus: string | null;
+        toStatus: string;
+        toStatusLabel: string;
+        note: string | null;
+        changedAt: string;
+      }>;
+      copyText: string;
+    }>(`/procurement/admin/special-orders/${id}`, { token });
+  },
+
+  updateSpecialOrderStatus(
+    token: string,
+    id: string,
+    body: { status: string; note?: string },
+  ) {
+    return request(`/procurement/admin/special-orders/${id}/status`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    });
   },
 
   listPartners(token: string) {
