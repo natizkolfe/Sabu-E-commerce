@@ -18,7 +18,7 @@ export type DeliveryLocationValue = {
   confirmed: boolean;
 };
 
-type Landmark = {
+type PlaceHit = {
   id: string;
   name: string;
   area: string;
@@ -27,6 +27,8 @@ type Landmark = {
   category: string;
   lng: number;
   lat: number;
+  source?: "landmark" | "geocode";
+  formattedAddress?: string;
 };
 
 const ADDIS = { lng: 38.789, lat: 8.9806 };
@@ -48,7 +50,9 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
   valueRef.current = value;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const [landmarks, setLandmarks] = useState<Landmark[]>([]);
+  const [quickLandmarks, setQuickLandmarks] = useState<PlaceHit[]>([]);
+  const [results, setResults] = useState<PlaceHit[]>([]);
+  const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [mapReady, setMapReady] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
@@ -61,9 +65,39 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
   useEffect(() => {
     fetch(`${API_URL}/delivery/landmarks?city=${encodeURIComponent("Addis Ababa")}`)
       .then((r) => r.json())
-      .then((rows: Landmark[]) => setLandmarks(Array.isArray(rows) ? rows : []))
-      .catch(() => setLandmarks([]));
+      .then((rows: PlaceHit[]) =>
+        setQuickLandmarks(Array.isArray(rows) ? rows.slice(0, 8) : []),
+      )
+      .catch(() => setQuickLandmarks([]));
   }, []);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const t = window.setTimeout(() => {
+      fetch(`${API_URL}/delivery/places/search?q=${encodeURIComponent(q)}`)
+        .then((r) => r.json())
+        .then((rows: PlaceHit[]) => {
+          if (!cancelled) setResults(Array.isArray(rows) ? rows : []);
+        })
+        .catch(() => {
+          if (!cancelled) setResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [query]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,9 +118,11 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
       });
 
       if (cancelled || !mapEl.current) return;
-      const map = L.map(mapEl.current).setView([value.lat, value.lng], 14);
+      const map = L.map(mapEl.current, {
+        attributionControl: false,
+      }).setView([value.lat, value.lng], 14);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap",
+        attribution: "",
         maxZoom: 19,
       }).addTo(map);
 
@@ -140,7 +176,9 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
     mapRef.current.setView([value.lat, value.lng]);
   }, [value.lat, value.lng, mapReady]);
 
-  function pickLandmark(lm: Landmark) {
+  function pickPlace(lm: PlaceHit) {
+    const formatted =
+      lm.formattedAddress || `${lm.name} — ${lm.area}, ${lm.city}`;
     onChange({
       ...value,
       lat: lm.lat,
@@ -149,13 +187,14 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
       landmarkPlaceId: lm.placeId,
       landmarkLat: lm.lat,
       landmarkLng: lm.lng,
-      addressText: `${lm.area}, ${lm.city}`,
-      formattedAddress: `${lm.name} — ${lm.area}, ${lm.city}`,
+      addressText: formatted,
+      formattedAddress: formatted,
       locationType: "landmark_nearby",
       locationSource: "search",
       confirmed: false,
     });
     setQuery(lm.name);
+    setResults([]);
   }
 
   function useMyLocation() {
@@ -196,13 +235,8 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
     });
   }
 
-  const filtered = landmarks.filter((l) => {
-    if (!query.trim()) return true;
-    const q = query.toLowerCase();
-    return (
-      l.name.toLowerCase().includes(q) || l.area.toLowerCase().includes(q)
-    );
-  });
+  const listToShow =
+    query.trim().length >= 2 ? results : quickLandmarks;
 
   if (value.confirmed) {
     return (
@@ -256,23 +290,37 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. CBE Bole, Edna Mall, Meskel Square"
+          placeholder="e.g. CBE Bole, Friendship Business Center, Addis Ababa University"
           className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-2 outline-none focus:border-sabu-leaf"
         />
       </label>
+      {searching && (
+        <p className="text-xs text-sabu-moss">Searching locations…</p>
+      )}
+      {query.trim().length >= 2 && !searching && listToShow.length === 0 && (
+        <p className="text-xs text-sabu-moss">
+          No matches found — drop a pin on the map and add instructions below.
+        </p>
+      )}
+      {query.trim().length < 2 && (
+        <p className="text-xs text-sabu-moss">
+          Popular landmarks (or type to search real places):
+        </p>
+      )}
 
-      {filtered.length > 0 && (
-        <ul className="max-h-36 overflow-y-auto border border-sabu-mist/50 text-sm">
-          {filtered.slice(0, 8).map((lm) => (
+      {listToShow.length > 0 && (
+        <ul className="max-h-44 overflow-y-auto border border-sabu-mist/50 text-sm">
+          {listToShow.slice(0, 10).map((lm) => (
             <li key={lm.id}>
               <button
                 type="button"
-                onClick={() => pickLandmark(lm)}
+                onClick={() => pickPlace(lm)}
                 className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-sabu-mist/20"
               >
                 <span className="text-sabu-ink">{lm.name}</span>
                 <span className="text-xs text-sabu-moss">
-                  {lm.area}, {lm.city} · {lm.category}
+                  {lm.formattedAddress || `${lm.area}, ${lm.city}`}
+                  {lm.source === "geocode" ? " · map" : " · landmark"}
                 </span>
               </button>
             </li>

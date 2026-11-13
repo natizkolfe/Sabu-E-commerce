@@ -220,6 +220,12 @@ export class DeliveryController {
   }
 
   @Public()
+  @Get('places/search')
+  placesSearch(@Query('q') q?: string) {
+    return this.deliveryService.searchPlaces(q ?? '');
+  }
+
+  @Public()
   @Get('quote')
   quote(
     @Query('lat') lat?: string,

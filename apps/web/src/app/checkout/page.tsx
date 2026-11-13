@@ -8,12 +8,19 @@ import { useAuth } from "../../context/auth-context";
 import { useCart } from "../../context/cart-context";
 import { formatEtb } from "../../lib/money";
 import {
+  ETHIOPIAN_PHONE_ERROR,
+  ethiopianLocalPart,
+  isValidEthiopianMobile,
+  normalizeEthiopianPhone,
+} from "../../lib/phone";
+import {
   DeliveryLocationPicker,
   type DeliveryLocationValue,
 } from "../../components/DeliveryLocationPicker";
 
 type PayMethod = Awaited<ReturnType<typeof api.listPaymentMethods>>[number];
 type TelebirrSettings = Awaited<ReturnType<typeof api.telebirrSettings>>;
+type BankAccount = Awaited<ReturnType<typeof api.listBankAccounts>>[number];
 type Quote = Awaited<ReturnType<typeof api.deliveryQuote>>;
 
 const CHANNELS: Array<{ value: ContactChannel; label: string; hint: string }> =
@@ -26,22 +33,12 @@ const CHANNELS: Array<{ value: ContactChannel; label: string; hint: string }> =
     {
       value: "telegram",
       label: "Telegram",
-      hint: "Requires Telegram linking when enabled",
-    },
-    {
-      value: "viber",
-      label: "Viber",
-      hint: "Requires Viber linking when enabled",
+      hint: "Order updates via Telegram when available",
     },
     {
       value: "phone",
-      label: "Phone call",
-      hint: "Our team will call the number you provide",
-    },
-    {
-      value: "sms",
-      label: "SMS",
-      hint: "Text updates when SMS is configured",
+      label: "Regular phone call",
+      hint: "Our team will call you on the number you provide",
     },
   ];
 
@@ -53,10 +50,12 @@ export default function CheckoutPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [recipientName, setRecipientName] = useState("");
-  const [recipientPhone, setRecipientPhone] = useState("+251");
+  const [phoneLocal, setPhoneLocal] = useState("");
   const [note, setNote] = useState("");
   const [channel, setChannel] = useState<ContactChannel>("whatsapp");
   const [consent, setConsent] = useState(true);
+  const [showErrors, setShowErrors] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const [location, setLocation] = useState<DeliveryLocationValue>({
     lng: 38.789,
     lat: 8.9806,
@@ -72,7 +71,10 @@ export default function CheckoutPage() {
     confirmed: false,
   });
   const [methods, setMethods] = useState<PayMethod[]>([]);
+  const [banks, setBanks] = useState<BankAccount[]>([]);
   const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [bankQuery, setBankQuery] = useState("");
   const [telebirr, setTelebirr] = useState<TelebirrSettings | null>(null);
   const [txnId, setTxnId] = useState("");
   const [amountAck, setAmountAck] = useState(false);
@@ -95,10 +97,46 @@ export default function CheckoutPage() {
   );
 
   const selectedMethod = methods.find((m) => m.id === paymentMethodId);
-  const isTelebirr = selectedMethod?.code === "telebirr_manual";
+  const methodCode = selectedMethod?.code ?? "";
+  const isTelebirr = methodCode === "telebirr_manual";
+  const isCbe = methodCode === "cbe_manual";
+  const isOtherBank = methodCode === "other_bank_manual";
+  const isManualPay = isTelebirr || isCbe || isOtherBank;
+
+  const cbeAccount = useMemo(
+    () =>
+      banks.find((b) => b.code === "cbe" || b.isFeatured) ??
+      banks.find((b) => b.bankName.toLowerCase().includes("commercial")),
+    [banks],
+  );
+  const otherBanks = useMemo(
+    () =>
+      banks.filter(
+        (b) => b.id !== cbeAccount?.id && b.isActive !== false,
+      ),
+    [banks, cbeAccount],
+  );
+  const filteredOtherBanks = useMemo(() => {
+    const q = bankQuery.trim().toLowerCase();
+    if (!q) return otherBanks;
+    return otherBanks.filter(
+      (b) =>
+        b.bankName.toLowerCase().includes(q) ||
+        b.accountName.toLowerCase().includes(q),
+    );
+  }, [otherBanks, bankQuery]);
+  const selectedBank = useMemo(() => {
+    if (isCbe) return cbeAccount ?? null;
+    if (isOtherBank)
+      return banks.find((b) => b.id === bankAccountId) ?? null;
+    return null;
+  }, [isCbe, isOtherBank, cbeAccount, banks, bankAccountId]);
+
+  const recipientPhone = normalizeEthiopianPhone(phoneLocal) ?? "";
+  const phoneValid = isValidEthiopianMobile(phoneLocal);
 
   const txnValid = useMemo(() => {
-    if (!isTelebirr) return true;
+    if (!isManualPay) return true;
     const trimmed = txnId.trim();
     if (!trimmed) return false;
     const regex = telebirr?.txnFormatRegex ?? "^[A-Za-z0-9\\-]{6,40}$";
@@ -107,10 +145,10 @@ export default function CheckoutPage() {
     } catch {
       return /^[A-Za-z0-9-]{6,40}$/.test(trimmed);
     }
-  }, [isTelebirr, txnId, telebirr]);
+  }, [isManualPay, txnId, telebirr]);
 
   useEffect(() => {
-    if (qualifiesWholesale) setUseWholesale(true);
+    // Bulk remains optional — do not auto-enable wholesale.
   }, [qualifiesWholesale]);
 
   useEffect(() => {
@@ -120,12 +158,17 @@ export default function CheckoutPage() {
       setPaymentMethodId(tb?.id ?? m[0]?.id ?? "");
     });
     api.telebirrSettings().then(setTelebirr).catch(() => undefined);
+    api.listBankAccounts().then(setBanks).catch(() => setBanks([]));
   }, []);
+
+  useEffect(() => {
+    if (isCbe && cbeAccount) setBankAccountId(cbeAccount.id);
+  }, [isCbe, cbeAccount]);
 
   useEffect(() => {
     if (user) {
       setRecipientName(user.fullName);
-      setRecipientPhone(user.phone ?? "+251");
+      setPhoneLocal(ethiopianLocalPart(user.phone ?? ""));
       const parts = user.fullName.split(" ");
       setFirstName(parts[0] ?? "");
       setLastName(parts.slice(1).join(" ") || parts[0] || "");
@@ -192,6 +235,16 @@ export default function CheckoutPage() {
     setAmountAck(false);
   }
 
+  async function copyText(label: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setError(`Could not copy ${label}`);
+    }
+  }
+
   async function changeQty(itemId: string, quantity: number) {
     setCartBusy(true);
     setError(null);
@@ -213,27 +266,110 @@ export default function CheckoutPage() {
   const grandTotal =
     deliveryFee != null ? (cart?.subtotal ?? 0) + deliveryFee : null;
 
+  const bankOk = !isOtherBank || !!bankAccountId;
+  const missing = useMemo(() => {
+    const items: Array<{ id: string; message: string }> = [];
+    if (!firstName.trim())
+      items.push({ id: "firstName", message: "Please enter your first name." });
+    if (!lastName.trim())
+      items.push({ id: "lastName", message: "Please enter your last name." });
+    if (!phoneValid)
+      items.push({
+        id: "phone",
+        message: ETHIOPIAN_PHONE_ERROR,
+      });
+    if (!channel)
+      items.push({
+        id: "channel",
+        message: "Please select a preferred communication method.",
+      });
+    if (!location.confirmed)
+      items.push({
+        id: "location",
+        message: "Please confirm your delivery location.",
+      });
+    if (deliveryFee == null)
+      items.push({
+        id: "delivery",
+        message: "Please select a delivery service (Standard or Express).",
+      });
+    if (!paymentMethodId)
+      items.push({
+        id: "payment",
+        message: "Please select a payment method.",
+      });
+    if (isOtherBank && !bankAccountId)
+      items.push({
+        id: "bank",
+        message: "Please select your bank.",
+      });
+    if (!txnValid)
+      items.push({
+        id: "txn",
+        message: "Please enter your payment transaction reference ID.",
+      });
+    if (!amountAck)
+      items.push({
+        id: "ack",
+        message: "Please confirm you paid the total payable amount.",
+      });
+    return items;
+  }, [
+    firstName,
+    lastName,
+    phoneValid,
+    channel,
+    location.confirmed,
+    deliveryFee,
+    paymentMethodId,
+    isOtherBank,
+    bankAccountId,
+    txnValid,
+    amountAck,
+  ]);
+
   const canPlace =
     !!cart?.items.length &&
-    !!firstName.trim() &&
-    !!lastName.trim() &&
-    !!recipientPhone &&
-    location.confirmed &&
-    deliveryFee != null &&
-    amountAck &&
-    !!paymentMethodId &&
-    txnValid &&
+    missing.length === 0 &&
+    bankOk &&
     !busy &&
     !cartBusy;
 
+  useEffect(() => {
+    if (!showErrors) return;
+    if (missing.length === 0) setError(null);
+    else setError(missing[0]?.message ?? null);
+  }, [missing, showErrors]);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    setShowErrors(true);
     if (!canPlace) {
-      setError("Complete all required fields before placing the order");
+      const first = missing[0];
+      setError(
+        first
+          ? first.message
+          : "Complete the required information to place your order.",
+      );
+      if (first) {
+        window.setTimeout(() => {
+          const el = document.getElementById(`checkout-${first.id}`);
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          const focusable = el?.querySelector(
+            "input, textarea, select, button",
+          ) as HTMLElement | null;
+          focusable?.focus({ preventScroll: true });
+        }, 50);
+      }
       return;
     }
-    if (!consent && ["whatsapp", "telegram", "viber"].includes(channel)) {
+    if (!consent && ["whatsapp", "telegram"].includes(channel)) {
       setError("Consent is required for messaging channels");
+      return;
+    }
+    const phoneE164 = normalizeEthiopianPhone(phoneLocal);
+    if (!phoneE164) {
+      setError(ETHIOPIAN_PHONE_ERROR);
       return;
     }
     setBusy(true);
@@ -241,7 +377,7 @@ export default function CheckoutPage() {
     try {
       const body = {
         recipientName,
-        recipientPhone,
+        recipientPhone: phoneE164,
         addressText: location.addressText || location.formattedAddress,
         lng: location.lng,
         lat: location.lat,
@@ -259,7 +395,11 @@ export default function CheckoutPage() {
         customerNote: note || undefined,
         idempotencyKey: crypto.randomUUID(),
         paymentMethodId,
-        telebirrTxnId: isTelebirr ? txnId.trim() : undefined,
+        telebirrTxnId: isManualPay ? txnId.trim() : undefined,
+        companyBankAccountId:
+          isCbe || isOtherBank
+            ? bankAccountId || cbeAccount?.id
+            : undefined,
         amountAcknowledged: true,
         preferredContactChannel: channel,
         contactConsent: consent,
@@ -334,23 +474,41 @@ export default function CheckoutPage() {
           </p>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm text-sabu-moss">
+            <label id="checkout-firstName" className="block text-sm text-sabu-moss">
               First name
               <input
                 required
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+                className={`mt-1 w-full border-b bg-transparent py-3 outline-none focus:border-sabu-leaf ${
+                  showErrors && !firstName.trim()
+                    ? "border-red-500"
+                    : "border-sabu-moss/40"
+                }`}
               />
+              {showErrors && !firstName.trim() && (
+                <span className="mt-1 block text-xs text-red-700">
+                  Please enter your first name.
+                </span>
+              )}
             </label>
-            <label className="block text-sm text-sabu-moss">
+            <label id="checkout-lastName" className="block text-sm text-sabu-moss">
               Last name
               <input
                 required
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+                className={`mt-1 w-full border-b bg-transparent py-3 outline-none focus:border-sabu-leaf ${
+                  showErrors && !lastName.trim()
+                    ? "border-red-500"
+                    : "border-sabu-moss/40"
+                }`}
               />
+              {showErrors && !lastName.trim() && (
+                <span className="mt-1 block text-xs text-red-700">
+                  Please enter your last name.
+                </span>
+              )}
             </label>
           </div>
 
@@ -363,25 +521,60 @@ export default function CheckoutPage() {
               className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
             />
           </label>
-          <label className="block text-sm text-sabu-moss">
-            Phone (E.164)
-            <input
-              required
-              value={recipientPhone}
-              onChange={(e) => setRecipientPhone(e.target.value)}
-              placeholder="+2519..."
-              className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+          <div id="checkout-phone">
+            <p className="text-sm text-sabu-moss">Phone number</p>
+            <div
+              className={`mt-1 flex items-stretch border-b ${
+                showErrors && !phoneValid
+                  ? "border-red-500"
+                  : "border-sabu-moss/40"
+              }`}
+            >
+              <span className="flex items-center bg-sabu-mist/20 px-3 py-3 text-sm font-medium text-sabu-ink">
+                +251
+              </span>
+              <input
+                required
+                inputMode="numeric"
+                autoComplete="tel-national"
+                value={phoneLocal}
+                onChange={(e) => {
+                  const next = e.target.value.replace(/\D/g, "").slice(0, 9);
+                  setPhoneLocal(next);
+                }}
+                placeholder="911123456"
+                className="w-full bg-transparent px-3 py-3 text-sm text-sabu-ink outline-none"
+                aria-label="Ethiopian mobile number without country code"
+              />
+            </div>
+            {showErrors && !phoneValid && (
+              <p className="mt-1 text-xs text-red-700">{ETHIOPIAN_PHONE_ERROR}</p>
+            )}
+            {phoneValid && (
+              <p className="mt-1 text-xs text-sabu-moss">
+                Will be saved as {recipientPhone}
+              </p>
+            )}
+          </div>
+          <div id="checkout-location">
+            <DeliveryLocationPicker
+              value={location}
+              onChange={(next) => {
+                setLocation(next);
+                invalidatePaymentDraft();
+              }}
             />
-          </label>
-          <DeliveryLocationPicker
-            value={location}
-            onChange={(next) => {
-              setLocation(next);
-              invalidatePaymentDraft();
-            }}
-          />
+            {showErrors && !location.confirmed && (
+              <p className="mt-2 text-xs text-red-700">
+                Please confirm your delivery location.
+              </p>
+            )}
+          </div>
 
-          <fieldset className="space-y-3 border border-sabu-mist/60 p-4">
+          <fieldset
+            id="checkout-delivery"
+            className="space-y-3 border border-sabu-mist/60 p-4"
+          >
             <legend className="px-1 text-sm text-sabu-moss">
               Delivery service
             </legend>
@@ -455,6 +648,11 @@ export default function CheckoutPage() {
                 </p>
               </div>
             )}
+            {showErrors && deliveryFee == null && (
+              <p className="text-xs text-red-700">
+                Please select a delivery service (Standard or Express).
+              </p>
+            )}
           </fieldset>
 
           <label className="block text-sm text-sabu-moss">
@@ -466,7 +664,7 @@ export default function CheckoutPage() {
             />
           </label>
 
-          <fieldset className="space-y-2 pt-2">
+          <fieldset id="checkout-channel" className="space-y-2 pt-2">
             <legend className="text-sm text-sabu-moss">
               Preferred communication method
             </legend>
@@ -490,7 +688,7 @@ export default function CheckoutPage() {
                 </span>
               </label>
             ))}
-            {["whatsapp", "telegram", "viber"].includes(channel) && (
+            {["whatsapp", "telegram"].includes(channel) && (
               <label className="flex items-start gap-2 pt-1 text-xs text-sabu-moss">
                 <input
                   type="checkbox"
@@ -514,96 +712,268 @@ export default function CheckoutPage() {
                 onChange={(e) => setUseWholesale(e.target.checked)}
               />
               <span>
-                Apply wholesale tier pricing
-                {qualifiesWholesale
-                  ? " (cart already qualifies at 10+)"
-                  : " (needs 10+ on bulk lines)"}
+                <span className="font-medium text-sabu-ink">
+                  Buy in Bulk – Wholesale Pricing
+                </span>
+                <span className="mt-0.5 block text-xs">
+                  Optional
+                  {qualifiesWholesale
+                    ? " · cart already qualifies at 10+"
+                    : " · needs 10+ on bulk-enabled lines"}
+                </span>
               </span>
             </label>
           )}
 
-          <section className="space-y-3 border border-sabu-mist/60 p-4">
+          <section
+            id="checkout-payment"
+            className="space-y-3 border border-sabu-mist/60 p-4"
+          >
             <h2 className="font-[family-name:var(--font-syne)] text-xl text-sabu-ink">
-              Telebirr payment
+              Payment
             </h2>
-            {telebirr && (
-              <div className="space-y-1 text-sm text-sabu-moss">
+            <div className="space-y-1 text-sm text-sabu-moss">
+              <p className="flex justify-between gap-3">
+                <span>Products</span>
+                <span className="text-sabu-ink">
+                  {formatEtb(cart?.subtotal ?? 0)}
+                </span>
+              </p>
+              <p className="flex justify-between gap-3">
+                <span>Delivery</span>
+                <span className="text-sabu-ink">
+                  {deliveryFee != null
+                    ? formatEtb(deliveryFee)
+                    : !location.confirmed
+                      ? "Confirm location"
+                      : quote?.pendingAdmin
+                        ? "Pending admin quote"
+                        : "Calculating…"}
+                </span>
+              </p>
+              <p className="flex justify-between gap-3 font-medium text-sabu-ink">
+                <span>Total payable</span>
+                <span>
+                  {grandTotal != null
+                    ? formatEtb(grandTotal)
+                    : formatEtb(cart?.subtotal ?? 0) + " + delivery"}
+                </span>
+              </p>
+              {grandTotal == null && (
+                <p className="text-xs">
+                  Confirm your delivery location above so Sabu can add the
+                  distance-based delivery fee to your total.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              {methods.map((m) => (
+                <label
+                  key={m.id}
+                  className="flex cursor-pointer items-center gap-3 text-sm text-sabu-ink"
+                >
+                  <input
+                    type="radio"
+                    name="pay"
+                    checked={paymentMethodId === m.id}
+                    onChange={() => {
+                      setPaymentMethodId(m.id);
+                      setBankQuery("");
+                      if (m.code !== "other_bank_manual") setBankAccountId("");
+                      invalidatePaymentDraft();
+                      setError(null);
+                    }}
+                  />
+                  <span>{m.displayName}</span>
+                </label>
+              ))}
+              {showErrors && !paymentMethodId && (
+                <p className="text-xs text-red-700">
+                  Please select a payment method.
+                </p>
+              )}
+            </div>
+
+            {isTelebirr && telebirr && (
+              <div className="space-y-2 border border-sabu-mist/50 p-3 text-sm text-sabu-moss">
                 <p>
-                  Pay{" "}
-                  <span className="font-medium text-sabu-ink">
-                    {grandTotal != null ? formatEtb(grandTotal) : "—"}
-                  </span>{" "}
-                  to <span className="text-sabu-ink">{telebirr.displayName}</span>
+                  <span className="text-sabu-ink">Payment method:</span> Telebirr
                 </p>
                 <p>
-                  Merchant:{" "}
-                  <span className="font-medium text-sabu-ink">
-                    {telebirr.merchantAccount}
-                  </span>
+                  <span className="text-sabu-ink">Phone number:</span>{" "}
+                  {telebirr.merchantAccount}
                 </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyText("phone", telebirr.merchantAccount)
+                  }
+                  className="border border-sabu-mist px-3 py-1.5 text-xs text-sabu-ink"
+                >
+                  {copied === "phone" ? "Copied" : "Copy phone number"}
+                </button>
                 <p>{telebirr.instructions}</p>
-                {telebirr.helpText && (
-                  <p className="text-xs">{telebirr.helpText}</p>
+              </div>
+            )}
+
+            {isCbe && selectedBank && (
+              <div className="space-y-2 border border-sabu-mist/50 p-3 text-sm text-sabu-moss">
+                <p>
+                  <span className="text-sabu-ink">Bank name:</span>{" "}
+                  {selectedBank.bankName}
+                </p>
+                <p>
+                  <span className="text-sabu-ink">Account name:</span>{" "}
+                  {selectedBank.accountName}
+                </p>
+                <p>
+                  <span className="text-sabu-ink">Account number:</span>{" "}
+                  {selectedBank.accountNumber}
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyText("account", selectedBank.accountNumber)
+                  }
+                  className="border border-sabu-mist px-3 py-1.5 text-xs text-sabu-ink"
+                >
+                  {copied === "account" ? "Copied" : "Copy account number"}
+                </button>
+                {selectedBank.instructions && <p>{selectedBank.instructions}</p>}
+              </div>
+            )}
+
+            {isOtherBank && (
+              <div id="checkout-bank" className="space-y-2">
+                <label className="block text-sm text-sabu-moss">
+                  Search bank
+                  <input
+                    value={bankQuery}
+                    onChange={(e) => setBankQuery(e.target.value)}
+                    placeholder="Type bank name…"
+                    className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-2 outline-none focus:border-sabu-leaf"
+                  />
+                </label>
+                <ul className="max-h-40 overflow-y-auto border border-sabu-mist/50 text-sm">
+                  {filteredOtherBanks.map((b) => (
+                    <li key={b.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBankAccountId(b.id);
+                          invalidatePaymentDraft();
+                        }}
+                        className={`flex w-full flex-col items-start px-3 py-2 text-left hover:bg-sabu-mist/20 ${
+                          bankAccountId === b.id ? "bg-sabu-leaf/10" : ""
+                        }`}
+                      >
+                        <span className="text-sabu-ink">{b.bankName}</span>
+                        <span className="text-xs text-sabu-moss">
+                          {b.accountName} · {b.accountNumber}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                  {filteredOtherBanks.length === 0 && (
+                    <li className="px-3 py-2 text-xs text-sabu-moss">
+                      No other banks configured yet — use CBE or Telebirr, or ask
+                      admin to add banks.
+                    </li>
+                  )}
+                </ul>
+                {selectedBank && (
+                  <div className="space-y-2 border border-sabu-mist/50 p-3 text-sm text-sabu-moss">
+                    <p>
+                      <span className="text-sabu-ink">Bank:</span>{" "}
+                      {selectedBank.bankName}
+                    </p>
+                    <p>
+                      <span className="text-sabu-ink">Account number:</span>{" "}
+                      {selectedBank.accountNumber}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        copyText("account", selectedBank.accountNumber)
+                      }
+                      className="border border-sabu-mist px-3 py-1.5 text-xs text-sabu-ink"
+                    >
+                      {copied === "account" ? "Copied" : "Copy account number"}
+                    </button>
+                    {selectedBank.instructions && (
+                      <p>{selectedBank.instructions}</p>
+                    )}
+                  </div>
+                )}
+                {showErrors && !bankAccountId && (
+                  <p className="text-xs text-red-700">Please select your bank.</p>
                 )}
               </div>
             )}
-            {methods.map((m) => (
-              <label
-                key={m.id}
-                className="flex cursor-pointer items-center gap-3 text-sm text-sabu-ink"
-              >
-                <input
-                  type="radio"
-                  name="pay"
-                  checked={paymentMethodId === m.id}
-                  onChange={() => {
-                    setPaymentMethodId(m.id);
-                    invalidatePaymentDraft();
-                  }}
-                />
-                <span>{m.displayName}</span>
-              </label>
-            ))}
-            {isTelebirr && (
-              <label className="block text-sm text-sabu-moss">
-                Telebirr transaction ID
+
+            {isManualPay && (
+              <label id="checkout-txn" className="block text-sm text-sabu-moss">
+                Payment transaction reference ID
                 <input
                   value={txnId}
                   onChange={(e) => setTxnId(e.target.value)}
                   placeholder="e.g. TB123456789"
-                  className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+                  className={`mt-1 w-full border-b bg-transparent py-3 outline-none focus:border-sabu-leaf ${
+                    showErrors && !txnValid
+                      ? "border-red-500"
+                      : "border-sabu-moss/40"
+                  }`}
                 />
-                {txnId && !txnValid && (
+                {showErrors && !txnValid && (
                   <span className="mt-1 block text-xs text-red-700">
-                    Enter a valid transaction reference
+                    Please enter your payment transaction reference ID.
                   </span>
                 )}
               </label>
             )}
-            <label className="flex items-start gap-2 text-sm text-sabu-moss">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={amountAck}
-                onChange={(e) => setAmountAck(e.target.checked)}
-                disabled={grandTotal == null}
-              />
-              <span>
-                I paid{" "}
-                <strong className="text-sabu-ink">
-                  {grandTotal != null ? formatEtb(grandTotal) : "—"}
-                </strong>{" "}
-                via Telebirr. Submitting a reference does not prove payment —
-                Sabu will verify before fulfillment.
-              </span>
-            </label>
+
+            <div id="checkout-ack">
+              <label
+                className={`flex items-start gap-2 text-sm text-sabu-moss ${
+                  showErrors && !amountAck ? "text-red-800" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={amountAck}
+                  onChange={(e) => {
+                    setAmountAck(e.target.checked);
+                    if (e.target.checked) setError(null);
+                  }}
+                  disabled={grandTotal == null}
+                />
+                <span>
+                  I paid{" "}
+                  <strong className="text-sabu-ink">
+                    {grandTotal != null
+                      ? formatEtb(grandTotal)
+                      : "the total payable amount"}
+                  </strong>{" "}
+                  via {selectedMethod?.displayName ?? "the selected method"}.
+                  Submitting a reference does not prove payment — Sabu will
+                  verify before fulfillment.
+                </span>
+              </label>
+              {showErrors && !amountAck && (
+                <p className="mt-1 text-xs text-red-700">
+                  Please confirm you paid the total payable amount.
+                </p>
+              )}
+            </div>
           </section>
 
           {error && <p className="text-sm text-red-700">{error}</p>}
 
           <button
             type="submit"
-            disabled={!canPlace}
+            disabled={busy || cartBusy || !cart?.items.length}
             className="mt-4 w-full bg-sabu-leaf px-5 py-3 text-sm text-sabu-cream hover:bg-sabu-forest disabled:opacity-60"
           >
             {busy ? "Placing order…" : "Place order"}
@@ -728,8 +1098,17 @@ export default function CheckoutPage() {
             )}
             <div className="flex justify-between text-lg text-sabu-ink">
               <span>Total payable</span>
-              <span>{grandTotal != null ? formatEtb(grandTotal) : "—"}</span>
+              <span>
+                {grandTotal != null
+                  ? formatEtb(grandTotal)
+                  : `${formatEtb(cart.subtotal)} + delivery`}
+              </span>
             </div>
+            {grandTotal == null && (
+              <p className="text-xs text-sabu-moss">
+                Confirm delivery location to calculate the final total.
+              </p>
+            )}
           </div>
         </aside>
       </div>

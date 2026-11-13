@@ -75,7 +75,14 @@ export default function VendorsPage() {
         </Link>
         <h1 className="mt-2 text-3xl tracking-tight">Vendors</h1>
         <p className="mt-1 text-sm text-[#9eb0a6]">
-          Marketplace sellers. Default commission 2% unless overridden.
+          Marketplace sellers (e.g. Mimi Baletena). Assign them on Products.
+          When items sell and payment is verified, Sabu keeps the commission
+          rate below (or the global 2%), and you remit the remaining product
+          balance from{" "}
+          <Link href="/commissions" className="text-[#8aa897] underline">
+            Commissions &amp; payouts
+          </Link>
+          . Delivery fees stay with Sabu.
         </p>
 
         <form onSubmit={onCreate} className="mt-8 grid gap-3 sm:grid-cols-2">

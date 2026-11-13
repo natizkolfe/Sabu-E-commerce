@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { DatabaseService } from '../../database/database.service';
 import type { AuthUser } from '../iam/auth.types';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 
 @Injectable()
 export class PaymentsService {
@@ -17,6 +18,7 @@ export class PaymentsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly config: ConfigService,
+    private readonly marketplace: MarketplaceService,
   ) {}
 
   async listActiveMethods() {
@@ -115,30 +117,205 @@ export class PaymentsService {
     }
   }
 
-  async listBankAccounts() {
+  async listBankAccounts(opts?: { includeInactive?: boolean }) {
     const { rows } = await this.db.query<{
       id: string;
       bank_name: string;
       account_name: string;
+      account_number: string;
       account_number_masked: string;
       currency: string;
       branch_name: string | null;
       instructions: string | null;
+      code: string | null;
+      is_featured: boolean;
+      is_active: boolean;
+      sort_order: number;
     }>(
-      `SELECT id, bank_name, account_name, account_number_masked, currency, branch_name, instructions
+      `SELECT id, bank_name, account_name, account_number, account_number_masked,
+              currency, branch_name, instructions, code, is_featured, is_active, sort_order
        FROM payments.company_bank_accounts
-       WHERE is_active
-       ORDER BY sort_order`,
+       WHERE ($1::boolean OR is_active)
+       ORDER BY sort_order, bank_name`,
+      [opts?.includeInactive === true],
     );
     return rows.map((r) => ({
       id: r.id,
       bankName: r.bank_name,
       accountName: r.account_name,
+      // Public checkout needs the full number so customers can copy it.
+      accountNumber: r.account_number,
       accountNumberMasked: r.account_number_masked,
       currency: r.currency,
       branchName: r.branch_name,
       instructions: r.instructions,
+      code: r.code,
+      isFeatured: r.is_featured,
+      isActive: r.is_active,
+      sortOrder: r.sort_order,
     }));
+  }
+
+  async upsertBankAccount(
+    user: { id: string },
+    input: {
+      id?: string;
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      branchName?: string | null;
+      instructions?: string | null;
+      code?: string | null;
+      isFeatured?: boolean;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    const digits = input.accountNumber.replace(/\s+/g, '');
+    const masked =
+      digits.length <= 4
+        ? `****${digits}`
+        : `****${digits.slice(-4)}`;
+
+    let before: Record<string, unknown> | null = null;
+    if (input.id) {
+      const existing = await this.listBankAccounts({ includeInactive: true });
+      const prev = existing.find((a) => a.id === input.id);
+      if (prev) {
+        before = {
+          bankName: prev.bankName,
+          accountName: prev.accountName,
+          accountNumberMasked: prev.accountNumberMasked,
+          branchName: prev.branchName,
+          instructions: prev.instructions,
+          code: prev.code,
+          isFeatured: prev.isFeatured,
+          isActive: prev.isActive,
+          sortOrder: prev.sortOrder,
+        };
+      }
+      await this.db.query(
+        `UPDATE payments.company_bank_accounts SET
+           bank_name = $2,
+           account_name = $3,
+           account_number = $4,
+           account_number_masked = $5,
+           branch_name = $6,
+           instructions = $7,
+           code = $8,
+           is_featured = COALESCE($9, is_featured),
+           is_active = COALESCE($10, is_active),
+           sort_order = COALESCE($11, sort_order),
+           updated_at = now()
+         WHERE id = $1`,
+        [
+          input.id,
+          input.bankName,
+          input.accountName,
+          digits,
+          masked,
+          input.branchName ?? null,
+          input.instructions ?? null,
+          input.code ?? null,
+          input.isFeatured ?? null,
+          input.isActive ?? null,
+          input.sortOrder ?? null,
+        ],
+      );
+      if (input.isFeatured) {
+        await this.db.query(
+          `UPDATE payments.company_bank_accounts SET is_featured = false WHERE id <> $1`,
+          [input.id],
+        );
+      }
+      const all = await this.listBankAccounts({ includeInactive: true });
+      const saved = all.find((a) => a.id === input.id) ?? null;
+      await this.writePaymentAccountAudit(user.id, input.id, 'update', before, saved);
+      return saved;
+    }
+    const { rows } = await this.db.query<{ id: string }>(
+      `INSERT INTO payments.company_bank_accounts (
+         bank_name, account_name, account_number, account_number_masked,
+         branch_name, instructions, code, is_featured, is_active, sort_order
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,false),COALESCE($9,true),COALESCE($10,100))
+       RETURNING id`,
+      [
+        input.bankName,
+        input.accountName,
+        digits,
+        masked,
+        input.branchName ?? null,
+        input.instructions ?? null,
+        input.code ?? null,
+        input.isFeatured ?? false,
+        input.isActive ?? true,
+        input.sortOrder ?? 100,
+      ],
+    );
+    const id = rows[0].id;
+    if (input.isFeatured) {
+      await this.db.query(
+        `UPDATE payments.company_bank_accounts SET is_featured = false WHERE id <> $1`,
+        [id],
+      );
+    }
+    const all = await this.listBankAccounts({ includeInactive: true });
+    const saved = all.find((a) => a.id === id) ?? null;
+    await this.writePaymentAccountAudit(user.id, id, 'create', null, saved);
+    return saved;
+  }
+
+  private async writePaymentAccountAudit(
+    actorId: string,
+    entityId: string,
+    kind: 'create' | 'update',
+    before: Record<string, unknown> | null,
+    after: {
+      bankName: string;
+      accountName: string;
+      accountNumberMasked: string;
+      branchName: string | null;
+      instructions: string | null;
+      code: string | null;
+      isFeatured: boolean;
+      isActive: boolean;
+      sortOrder: number;
+    } | null,
+  ) {
+    try {
+      await this.db.query(
+        `INSERT INTO audit.audit_logs (
+           actor_id, action, entity_type, entity_id, before_data, after_data
+         ) VALUES ($1, $2, 'payment_bank_account', $3, $4::jsonb, $5::jsonb)`,
+        [
+          actorId,
+          kind === 'create'
+            ? 'payment.bank_account.create'
+            : 'payment.bank_account.update',
+          entityId,
+          before ? JSON.stringify(before) : null,
+          after
+            ? JSON.stringify({
+                bankName: after.bankName,
+                accountName: after.accountName,
+                accountNumberMasked: after.accountNumberMasked,
+                branchName: after.branchName,
+                instructions: after.instructions,
+                code: after.code,
+                isFeatured: after.isFeatured,
+                isActive: after.isActive,
+                sortOrder: after.sortOrder,
+              })
+            : null,
+        ],
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to write bank account audit for ${entityId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   async initializeChapa(input: {
@@ -466,7 +643,12 @@ export class PaymentsService {
        JOIN sales.orders o ON o.id = i.order_id
        JOIN payments.payment_methods m ON m.id = t.payment_method_id
        LEFT JOIN payments.company_bank_accounts b ON b.id = t.company_bank_account_id
-       WHERE m.code IN ('bank_transfer_manual', 'telebirr_manual') AND t.status = 'pending'
+       WHERE m.code IN (
+         'telebirr_manual',
+         'cbe_manual',
+         'other_bank_manual',
+         'bank_transfer_manual'
+       ) AND t.status = 'pending'
        ORDER BY t.initiated_at`,
     );
 
@@ -570,6 +752,15 @@ export class PaymentsService {
         [tx.id, JSON.stringify({ transactionId: tx.id, source: 'admin' })],
       );
       await client.query('COMMIT');
+      try {
+        await this.marketplace.accrueOrderCommissions(tx.order_id);
+      } catch (err) {
+        this.logger.warn(
+          `Commission accrual failed for order ${tx.order_id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       return { ok: true };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -712,9 +903,12 @@ export class PaymentsService {
         id: string;
         payment_intent_id: string;
         status: string;
+        order_id: string;
       }>(
-        `SELECT id, payment_intent_id, status FROM payments.payment_transactions
-         WHERE merchant_reference = $1 FOR UPDATE`,
+        `SELECT t.id, t.payment_intent_id, t.status, i.order_id
+         FROM payments.payment_transactions t
+         JOIN payments.payment_intents i ON i.id = t.payment_intent_id
+         WHERE t.merchant_reference = $1 FOR UPDATE OF t`,
         [merchantReference],
       );
       const tx = rows[0];
@@ -740,6 +934,15 @@ export class PaymentsService {
       );
       await this.applySuccessfulIntent(client, tx.payment_intent_id);
       await client.query('COMMIT');
+      try {
+        await this.marketplace.accrueOrderCommissions(tx.order_id);
+      } catch (err) {
+        this.logger.warn(
+          `Commission accrual failed for order ${tx.order_id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

@@ -44,7 +44,11 @@ export class CheckoutDto {
   @MaxLength(120)
   recipientName!: string;
 
-  @Matches(/^\+[1-9][0-9]{7,14}$/)
+  /** Ethiopian mobile in E.164: +2519xxxxxxxx */
+  @Matches(/^\+2519\d{8}$/, {
+    message:
+      'Please enter a valid Ethiopian phone number, such as 911123456.',
+  })
   recipientPhone!: string;
 
   @IsString()
@@ -121,12 +125,20 @@ export class CheckoutDto {
   @IsUUID()
   paymentMethodId!: string;
 
-  /** Telebirr transaction reference entered by customer after paying. */
+  /**
+   * Payment transaction reference (Telebirr TXN / bank transfer ref).
+   * Required for all manual-verification methods.
+   */
   @IsOptional()
   @IsString()
   @MinLength(6)
   @MaxLength(40)
   telebirrTxnId?: string;
+
+  /** Selected company bank account (CBE or Other Banks). */
+  @IsOptional()
+  @IsUUID()
+  companyBankAccountId?: string;
 
   /** Customer acknowledges the final payable amount before place order. */
   @IsOptional()

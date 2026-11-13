@@ -45,6 +45,7 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [variantId, setVariantId] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
+  const [buyBulk, setBuyBulk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activePreview, setActivePreview] = useState(0);
@@ -56,7 +57,8 @@ export default function ProductDetailPage() {
       .then((p) => {
         setProduct(p);
         setVariantId(p.variants[0]?.id ?? null);
-        setQty(p.bulkPurchasingEnabled ? 10 : 1);
+        setBuyBulk(false);
+        setQty(1);
         setActivePreview(0);
       })
       .catch((err: Error) => setError(err.message));
@@ -88,6 +90,7 @@ export default function ProductDetailPage() {
 
   const useWholesale =
     !!product?.bulkPurchasingEnabled &&
+    buyBulk &&
     qty >= (selected?.minOrderQtyWholesale ?? 10);
 
   const unitPrice = useMemo(() => {
@@ -286,9 +289,22 @@ export default function ProductDetailPage() {
             </select>
           </label>
 
-          <label className="mt-4 block text-xs text-sabu-moss">
-            Quantity
+          <div className="mt-4">
+            <p className="text-xs text-sabu-moss">
+              Purchase type:{" "}
+              <span className="text-sabu-ink">
+                {buyBulk ? "Bulk / wholesale" : "Standard / single item"}
+              </span>
+            </p>
             <div className="mt-1.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setQty(Math.max(1, qty - 1))}
+                className="h-9 w-9 border border-sabu-mist text-sabu-ink"
+                aria-label="Decrease quantity"
+              >
+                −
+              </button>
               <input
                 type="number"
                 min={1}
@@ -297,30 +313,63 @@ export default function ProductDetailPage() {
                 onChange={(e) =>
                   setQty(Math.max(1, Math.min(500, Number(e.target.value) || 1)))
                 }
-                className="w-24 border border-sabu-mist bg-transparent px-3 py-2 text-sm text-sabu-ink outline-none focus:border-sabu-leaf"
+                className="w-20 border border-sabu-mist bg-transparent px-3 py-2 text-center text-sm text-sabu-ink outline-none focus:border-sabu-leaf"
               />
-              {product.bulkPurchasingEnabled && (
-                <div className="flex flex-wrap gap-1">
-                  {[10, 50, 100].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setQty(n)}
-                      className={`px-2 py-1 text-[11px] ${
-                        qty === n
-                          ? "bg-sabu-leaf text-sabu-cream"
-                          : "border border-sabu-mist text-sabu-moss hover:border-sabu-leaf"
-                      }`}
-                    >
-                      {n}+
-                    </button>
-                  ))}
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => setQty(Math.min(500, qty + 1))}
+                className="h-9 w-9 border border-sabu-mist text-sabu-ink"
+                aria-label="Increase quantity"
+              >
+                +
+              </button>
             </div>
-          </label>
+          </div>
 
-          {product.bulkPurchasingEnabled && wholesaleTiers.length > 0 && (
+          {product.bulkPurchasingEnabled && (
+            <label className="mt-4 flex items-start gap-2 text-sm text-sabu-moss">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={buyBulk}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setBuyBulk(on);
+                  setQty(on ? Math.max(qty, selected?.minOrderQtyWholesale ?? 10) : 1);
+                }}
+              />
+              <span>
+                <span className="font-medium text-sabu-ink">
+                  Buy in Bulk – Wholesale Pricing
+                </span>
+                <span className="mt-0.5 block text-xs">
+                  Optional. Shows wholesale tiers and bulk quantities when
+                  selected.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {product.bulkPurchasingEnabled && buyBulk && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {[10, 50, 100].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setQty(n)}
+                  className={`px-2 py-1 text-[11px] ${
+                    qty === n
+                      ? "bg-sabu-leaf text-sabu-cream"
+                      : "border border-sabu-mist text-sabu-moss hover:border-sabu-leaf"
+                  }`}
+                >
+                  {n}+
+                </button>
+              ))}
+            </div>
+          )}
+
+          {product.bulkPurchasingEnabled && buyBulk && wholesaleTiers.length > 0 && (
             <div className="mt-5 border border-sabu-mist/60 px-3 py-3">
               <p className="text-[11px] tracking-wide text-sabu-moss uppercase">
                 Bulk price tiers

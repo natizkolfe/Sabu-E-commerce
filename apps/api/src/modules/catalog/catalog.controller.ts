@@ -16,6 +16,7 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { CatalogService } from './catalog.service';
 import { Public } from '../../common/decorators/public.decorator';
@@ -61,6 +62,11 @@ class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   bulkPurchasingEnabled?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsUUID()
+  vendorId?: string | null;
 }
 
 class UpdateProductDto {
@@ -119,6 +125,11 @@ class UpdateProductDto {
   @IsOptional()
   @IsString()
   returnPolicyEffectiveAt?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsUUID()
+  vendorId?: string | null;
 }
 
 class CreateVariantDto {

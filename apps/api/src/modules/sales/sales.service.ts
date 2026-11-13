@@ -13,6 +13,10 @@ import { AuthUser } from '../iam/auth.types';
 import { NotifyService } from '../notify/notify.service';
 import { WhatsAppService } from '../notify/whatsapp.service';
 import { PricingService } from '../pricing/pricing.service';
+import {
+  ETHIOPIAN_PHONE_ERROR,
+  normalizeEthiopianPhone,
+} from '../../common/phone';
 import { AddCartItemDto } from './dto/cart-item.dto';
 import { CheckoutDto } from './dto/checkout.dto';
 
@@ -91,6 +95,11 @@ export class SalesService {
     if (!preferredChannel) {
       throw new BadRequestException('preferredContactChannel is required');
     }
+    const normalizedPhone = normalizeEthiopianPhone(dto.recipientPhone);
+    if (!normalizedPhone) {
+      throw new BadRequestException(ETHIOPIAN_PHONE_ERROR);
+    }
+    dto.recipientPhone = normalizedPhone;
     const requiresManualContact =
       preferredChannel === 'phone' || preferredChannel === 'sms';
     const contactConsentAt =
@@ -175,6 +184,7 @@ export class SalesService {
         sku: string;
         product_name: string;
         variant_name: string | null;
+        vendor_id: string | null;
         bulk_purchasing_enabled: boolean;
         returns_allowed: boolean;
         return_window_days: number | null;
@@ -183,7 +193,8 @@ export class SalesService {
         return_policy_description: string | null;
       }>(
         `SELECT ci.id AS item_id, ci.variant_id, ci.quantity, pv.sku,
-                p.name AS product_name, pv.variant_name, p.bulk_purchasing_enabled,
+                p.name AS product_name, pv.variant_name, p.vendor_id,
+                p.bulk_purchasing_enabled,
                 p.returns_allowed, p.return_window_days, p.return_conditions,
                 p.return_instructions, p.return_policy_description
          FROM sales.cart_items ci
@@ -398,10 +409,11 @@ export class SalesService {
           `INSERT INTO sales.order_items (
              order_id, line_no, variant_id, sku_snapshot, name_snapshot,
              quantity, unit_price, price_list_item_id, tax_rate, tax_amount, line_total,
+             vendor_id,
              returns_allowed_snapshot, return_window_days_snapshot,
              return_conditions_snapshot, return_instructions_snapshot,
              return_policy_description_snapshot, return_policy_label_snapshot
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,$10,$11,$12,$13,$14,$15)
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,$10,$11,$12,$13,$14,$15,$16)
            RETURNING id`,
           [
             orderId,
@@ -413,6 +425,7 @@ export class SalesService {
             line.unit,
             line.priceListItemId,
             line.lineTotal,
+            line.vendor_id ?? null,
             returnsAllowed,
             returnsAllowed ? (line.return_window_days ?? 7) : null,
             line.return_conditions ?? null,
@@ -451,43 +464,93 @@ export class SalesService {
       const paymentMethodCode = methods[0].code;
       const paymentMethodDisplayName = methods[0].display_name;
 
-      let telebirrTxnId: string | null = null;
-      if (paymentMethodCode === 'telebirr_manual') {
+      const manualCodes = new Set([
+        'telebirr_manual',
+        'cbe_manual',
+        'other_bank_manual',
+      ]);
+      const isManualPay = manualCodes.has(paymentMethodCode);
+      let paymentTxnId: string | null = null;
+      let companyBankAccountId: string | null =
+        dto.companyBankAccountId ?? null;
+      let destinationLabel: string | null = null;
+      let destinationValue: string | null = null;
+
+      if (isManualPay) {
         const { rows: tbSettings } = await client.query<{
           txn_format_regex: string;
+          merchant_account: string;
+          display_name: string;
         }>(
-          `SELECT txn_format_regex FROM payments.telebirr_merchant_settings WHERE id = 1`,
+          `SELECT txn_format_regex, merchant_account, display_name
+           FROM payments.telebirr_merchant_settings WHERE id = 1`,
         );
         const regex =
           tbSettings[0]?.txn_format_regex ?? '^[A-Za-z0-9\\-]{6,40}$';
-        telebirrTxnId = dto.telebirrTxnId?.trim() ?? '';
-        if (!telebirrTxnId) {
-          throw new BadRequestException('Telebirr transaction ID is required');
+        paymentTxnId = dto.telebirrTxnId?.trim() ?? '';
+        if (!paymentTxnId) {
+          throw new BadRequestException(
+            'Payment transaction reference ID is required',
+          );
         }
         let ok = false;
         try {
-          ok = new RegExp(regex).test(telebirrTxnId);
+          ok = new RegExp(regex).test(paymentTxnId);
         } catch {
-          ok = /^[A-Za-z0-9-]{6,40}$/.test(telebirrTxnId);
+          ok = /^[A-Za-z0-9-]{6,40}$/.test(paymentTxnId);
         }
         if (!ok) {
           throw new BadRequestException(
-            'Telebirr transaction ID format is invalid',
+            'Payment transaction reference format is invalid',
           );
         }
+
+        if (paymentMethodCode === 'telebirr_manual') {
+          destinationLabel = tbSettings[0]?.display_name ?? 'Telebirr';
+          destinationValue = tbSettings[0]?.merchant_account ?? null;
+        } else {
+          if (paymentMethodCode === 'cbe_manual' && !companyBankAccountId) {
+            const { rows: cbe } = await client.query<{ id: string }>(
+              `SELECT id FROM payments.company_bank_accounts
+               WHERE is_active AND (code = 'cbe' OR is_featured)
+               ORDER BY sort_order LIMIT 1`,
+            );
+            companyBankAccountId = cbe[0]?.id ?? null;
+          }
+          if (!companyBankAccountId) {
+            throw new BadRequestException(
+              'Please select a bank account for payment',
+            );
+          }
+          const { rows: banks } = await client.query<{
+            id: string;
+            bank_name: string;
+            account_number: string;
+            account_name: string;
+          }>(
+            `SELECT id, bank_name, account_number, account_name
+             FROM payments.company_bank_accounts
+             WHERE id = $1 AND is_active`,
+            [companyBankAccountId],
+          );
+          if (!banks[0]) {
+            throw new BadRequestException('Invalid bank account selected');
+          }
+          destinationLabel = `${banks[0].bank_name} — ${banks[0].account_name}`;
+          destinationValue = banks[0].account_number;
+        }
+
         const { rows: dupes } = await client.query<{ id: string }>(
           `SELECT t.id FROM payments.payment_transactions t
-           JOIN payments.payment_methods m ON m.id = t.payment_method_id
-           WHERE m.code = 'telebirr_manual'
-             AND t.provider_reference IS NOT NULL
+           WHERE t.provider_reference IS NOT NULL
              AND lower(t.provider_reference) = lower($1)
              AND t.status IN ('pending','succeeded')
            LIMIT 1`,
-          [telebirrTxnId],
+          [paymentTxnId],
         );
         if (dupes[0]) {
           throw new ConflictException(
-            'This Telebirr transaction ID was already submitted',
+            'This payment transaction reference was already submitted',
           );
         }
       }
@@ -495,30 +558,30 @@ export class SalesService {
       const { rows: intents } = await client.query<{ id: string }>(
         `INSERT INTO payments.payment_intents (order_id, purpose, amount, currency, status)
          VALUES ($1, 'full', $2, 'ETB', $3) RETURNING id`,
-        [
-          orderId,
-          grandTotal,
-          paymentMethodCode === 'telebirr_manual' ? 'processing' : 'pending',
-        ],
+        [orderId, grandTotal, isManualPay ? 'processing' : 'pending'],
       );
       const paymentIntentId = intents[0].id;
 
-      if (paymentMethodCode === 'telebirr_manual' && telebirrTxnId) {
-        const merchantRef = `TB-${orderNumber}-${randomBytes(3).toString('hex')}`;
+      if (isManualPay && paymentTxnId) {
+        const merchantRef = `${paymentMethodCode === 'telebirr_manual' ? 'TB' : 'BK'}-${orderNumber}-${randomBytes(3).toString('hex')}`;
         const { rows: txs } = await client.query<{ id: string }>(
           `INSERT INTO payments.payment_transactions (
              payment_intent_id, payment_method_id, merchant_reference,
              provider_reference, idempotency_key, amount, currency, status,
-             customer_reference
-           ) VALUES ($1,$2,$3,$4,$5,$6,'ETB','pending',$4)
+             customer_reference, company_bank_account_id,
+             payment_destination_label, payment_destination_value
+           ) VALUES ($1,$2,$3,$4,$5,$6,'ETB','pending',$4,$7,$8,$9)
            RETURNING id`,
           [
             paymentIntentId,
             methods[0].id,
             merchantRef,
-            telebirrTxnId,
+            paymentTxnId,
             randomBytes(16).toString('hex'),
             grandTotal,
+            companyBankAccountId,
+            destinationLabel,
+            destinationValue,
           ],
         );
         await client.query(
@@ -528,7 +591,7 @@ export class SalesService {
           [
             txs[0].id,
             orderId,
-            `Customer submitted Telebirr TXN ${telebirrTxnId}`,
+            `Customer submitted ${paymentMethodDisplayName} ref ${paymentTxnId}`,
           ],
         );
       }
@@ -589,10 +652,7 @@ export class SalesService {
         orderId,
         orderNumber,
         status: 'pending_payment',
-        paymentStatus:
-          paymentMethodCode === 'telebirr_manual'
-            ? 'pending_verification'
-            : 'unpaid',
+        paymentStatus: isManualPay ? 'pending_verification' : 'unpaid',
         currency: 'ETB',
         subtotal,
         deliveryFee,
@@ -603,7 +663,7 @@ export class SalesService {
         paymentIntentId,
         paymentMethodCode,
         paymentMethodDisplayName,
-        telebirrTxnId,
+        telebirrTxnId: paymentTxnId,
         whatsappDeepLink,
         preferredContactChannel: preferredChannel,
         requiresManualContact,

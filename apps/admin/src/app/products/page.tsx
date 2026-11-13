@@ -34,6 +34,9 @@ export default function ProductsAdminPage() {
   const [items, setItems] = useState<ProductListItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [vendors, setVendors] = useState<
+    Awaited<ReturnType<typeof adminApi.listVendors>>
+  >([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
   const [q, setQ] = useState("");
@@ -48,6 +51,7 @@ export default function ProductsAdminPage() {
   const [editStatus, setEditStatus] = useState("active");
   const [editBulk, setEditBulk] = useState(false);
   const [editBrandId, setEditBrandId] = useState("");
+  const [editVendorId, setEditVendorId] = useState("");
   const [editCategoryIds, setEditCategoryIds] = useState<string[]>([]);
   const [editReturnsAllowed, setEditReturnsAllowed] = useState(true);
   const [editReturnDays, setEditReturnDays] = useState("7");
@@ -60,6 +64,7 @@ export default function ProductsAdminPage() {
   const [newSlug, setNewSlug] = useState("");
   const [newCategoryId, setNewCategoryId] = useState("");
   const [newBrandId, setNewBrandId] = useState("");
+  const [newVendorId, setNewVendorId] = useState("");
   const [newStatus, setNewStatus] = useState("draft");
   const [newBulk, setNewBulk] = useState(false);
   const [enhanceLibrary, setEnhanceLibrary] = useState<
@@ -112,10 +117,12 @@ export default function ProductsAdminPage() {
     Promise.all([
       adminApi.listCategories(s.accessToken),
       adminApi.listBrands(s.accessToken),
-    ]).then(([cats, brandRows]) => {
+      adminApi.listVendors(s.accessToken).catch(() => []),
+    ]).then(([cats, brandRows, vendorRows]) => {
       setCategories(cats);
       setNewCategoryId(cats[0]?.id ?? "");
       setBrands(brandRows);
+      setVendors(vendorRows);
     });
   }, []);
 
@@ -130,6 +137,7 @@ export default function ProductsAdminPage() {
     setMessage(null);
     setSelectedId(id);
     setShowCreate(false);
+    setPendingEnhance([]);
     const p = await adminApi.getProduct(token, id);
     setDetail(p);
     setEditName(p.name);
@@ -138,6 +146,7 @@ export default function ProductsAdminPage() {
     setEditStatus(p.status);
     setEditBulk(p.bulkPurchasingEnabled);
     setEditBrandId(p.brandId ?? "");
+    setEditVendorId(p.vendorId ?? "");
     setEditCategoryIds(
       p.categoryIds?.length ? p.categoryIds : [p.categoryId],
     );
@@ -173,6 +182,7 @@ export default function ProductsAdminPage() {
         description: editDescription || undefined,
         status: editStatus,
         brandId: editBrandId || null,
+        vendorId: editVendorId || null,
         categoryId: categoryIds[0],
         categoryIds,
         bulkPurchasingEnabled: editBulk,
@@ -204,6 +214,7 @@ export default function ProductsAdminPage() {
         categoryId: newCategoryId,
         categoryIds: [newCategoryId],
         brandId: newBrandId || undefined,
+        vendorId: newVendorId || null,
         slug: newSlug || slugify(newName),
         name: newName,
         status: newStatus,
@@ -326,22 +337,16 @@ export default function ProductsAdminPage() {
 
   async function refreshPendingEnhance(productId: string, accessToken: string) {
     try {
-      const [forProduct, staged, lib] = await Promise.all([
+      // Only this product's pending AI jobs — never dump unrelated staged
+      // enhances (keyboard, faces, etc.) onto the wrong product page.
+      const [forProduct, lib] = await Promise.all([
         adminApi.studioPending(accessToken, {
           productId,
           jobType: "product_transform",
         }),
-        adminApi.studioPending(accessToken, {
-          stagedOnly: true,
-          jobType: "product_transform",
-        }),
         adminApi.studioLibrary(accessToken).catch(() => []),
       ]);
-      const seen = new Set(forProduct.map((j) => j.id));
-      setPendingEnhance([
-        ...forProduct,
-        ...staged.filter((j) => !seen.has(j.id)),
-      ]);
+      setPendingEnhance(forProduct.filter((j) => j.productId === productId));
       setEnhanceLibrary(lib);
     } catch {
       setPendingEnhance([]);
@@ -410,18 +415,8 @@ export default function ProductsAdminPage() {
     if (!token || !detail) return;
     setBusy(true);
     try {
-      const job = pendingEnhance.find((j) => j.id === id);
-      if (job?.staged || !job?.productId) {
-        await adminApi.studioAttach(token, id, {
-          productId: detail.id,
-          setPrimary: true,
-          includeOriginal: true,
-        });
-        setMessage("Staged enhance assigned to this product as primary");
-      } else {
-        await adminApi.studioApprove(token, id);
-        setMessage("Enhanced image approved and set as primary");
-      }
+      await adminApi.studioApprove(token, id);
+      setMessage("Enhanced image approved and set as primary");
       await refreshPendingEnhance(detail.id, token);
       await openProduct(detail.id);
     } catch (err) {
@@ -594,6 +589,24 @@ export default function ProductsAdminPage() {
                     </option>
                   ))}
                 </select>
+                <label className="block text-xs text-[#8aa897]">
+                  Vendor (who gets paid when this sells)
+                  <select
+                    value={newVendorId}
+                    onChange={(e) => setNewVendorId(e.target.value)}
+                    className="mt-1 w-full bg-[#17201c] px-3 py-2 text-sm text-[#eef2ef]"
+                  >
+                    <option value="">Sabu / no vendor</option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.displayName} ({v.vendorCode})
+                        {v.commissionRatePct != null
+                          ? ` · ${v.commissionRatePct}%`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <div className="flex flex-wrap gap-3">
                   <select
                     value={newStatus}
@@ -751,6 +764,24 @@ export default function ProductsAdminPage() {
                       ))}
                     </select>
                   </label>
+                  <label className="block text-xs text-[#8aa897]">
+                    Vendor
+                    <select
+                      value={editVendorId}
+                      onChange={(e) => setEditVendorId(e.target.value)}
+                      className="mt-1 w-full bg-[#17201c] px-3 py-2 text-sm text-[#eef2ef]"
+                    >
+                      <option value="">Sabu / no vendor</option>
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.displayName} ({v.vendorCode})
+                          {v.commissionRatePct != null
+                            ? ` · ${v.commissionRatePct}% fee`
+                            : " · global fee"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <div>
                     <p className="text-xs text-[#8aa897]">Categories</p>
                     <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto text-sm">
@@ -870,12 +901,13 @@ export default function ProductsAdminPage() {
                 <div className="border-t border-[#24302a] pt-4">
                   <h3 className="text-sm text-[#8aa897]">Product images</h3>
                   <p className="mt-1 text-[11px] text-[#8aa897]">
-                    Prefer{" "}
+                    Only AI previews for{" "}
+                    <strong className="text-[#b7c7be]">this product</strong>{" "}
+                    appear below. Unrelated studio enhances stay in{" "}
                     <Link href="/studio" className="text-[#9dcdb4] underline">
                       Enhance photos
-                    </Link>{" "}
-                    for white-canvas standards, then assign here. Try-on is
-                    optional and separate.
+                    </Link>
+                    .
                   </p>
                   <div className="mt-2 flex items-center justify-between gap-2 rounded border border-[#24302a] px-2 py-1.5">
                     <span className="text-[11px] text-[#8aa897]">
@@ -993,11 +1025,10 @@ export default function ProductsAdminPage() {
                   {pendingEnhance.length > 0 && (
                     <div className="mt-4 space-y-4 border border-[#24302a] p-3">
                       <p className="text-xs text-[#9dcdb4]">
-                        Pending AI enhance — approve to publish, or assign a
-                        staged enhance to this product
+                        Pending AI enhance for this product only — approve to
+                        publish
                       </p>
                       {pendingEnhance.map((job) => {
-                        const staged = job.staged || !job.productId;
                         const originalSrc = job.sourceUrl
                           ? `${API_URL}${job.sourceUrl}`
                           : null;
@@ -1014,7 +1045,6 @@ export default function ProductsAdminPage() {
                                 " ",
                               )}{" "}
                               · {job.provider ?? "ai"}
-                              {staged ? " · staged (unassigned)" : ""}
                             </p>
                             <div className="mt-2 grid gap-2 sm:grid-cols-2">
                               <div>
@@ -1057,7 +1087,7 @@ export default function ProductsAdminPage() {
                                 onClick={() => void approveEnhance(job.id)}
                                 className="bg-[#2f6b4f] px-3 py-1.5 text-xs disabled:opacity-50"
                               >
-                                {staged ? "Assign to this product" : "Approve"}
+                                Approve
                               </button>
                               <button
                                 type="button"

@@ -212,19 +212,189 @@ export class MarketplaceService {
        LIMIT 200`,
       params,
     );
+    return rows.map((r) => {
+      const gross = Number(r.gross_amount);
+      const commission = Number(r.commission_amount);
+      return {
+        id: r.id,
+        orderId: r.order_id,
+        orderNumber: r.order_number,
+        vendorId: r.vendor_id,
+        vendorName: r.vendor_name,
+        grossAmount: gross,
+        ratePct: Number(r.rate_pct),
+        commissionAmount: commission,
+        /** Product sales minus Sabu commission — what admin remits to the vendor. */
+        netPayable: Math.round((gross - commission) * 100) / 100,
+        status: r.status,
+        entryType: r.entry_type,
+        createdAt: r.created_at,
+      };
+    });
+  }
+
+  async listSettlements(opts?: { vendorId?: string }) {
+    const params: unknown[] = [];
+    const where = ['TRUE'];
+    if (opts?.vendorId) {
+      params.push(opts.vendorId);
+      where.push(`s.vendor_id = $${params.length}`);
+    }
+    const { rows } = await this.db.query<{
+      id: string;
+      settlement_number: string;
+      vendor_id: string;
+      vendor_name: string;
+      period_start: string;
+      period_end: string;
+      gross_sales: string;
+      commission_total: string;
+      net_payable: string;
+      status: string;
+      payout_reference: string | null;
+      paid_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT s.id, s.settlement_number, s.vendor_id, v.display_name AS vendor_name,
+              s.period_start::text, s.period_end::text,
+              s.gross_sales::text, s.commission_total::text, s.net_payable::text,
+              s.status, s.payout_reference, s.paid_at, s.created_at
+       FROM marketplace.settlements s
+       JOIN marketplace.vendors v ON v.id = s.vendor_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY s.created_at DESC
+       LIMIT 100`,
+      params,
+    );
     return rows.map((r) => ({
       id: r.id,
-      orderId: r.order_id,
-      orderNumber: r.order_number,
+      settlementNumber: r.settlement_number,
       vendorId: r.vendor_id,
       vendorName: r.vendor_name,
-      grossAmount: Number(r.gross_amount),
-      ratePct: Number(r.rate_pct),
-      commissionAmount: Number(r.commission_amount),
+      periodStart: r.period_start,
+      periodEnd: r.period_end,
+      grossSales: Number(r.gross_sales),
+      commissionTotal: Number(r.commission_total),
+      netPayable: Number(r.net_payable),
       status: r.status,
-      entryType: r.entry_type,
+      payoutReference: r.payout_reference,
+      paidAt: r.paid_at,
       createdAt: r.created_at,
     }));
+  }
+
+  /**
+   * Bundle unpaid commission entries for a vendor into a settlement.
+   * Delivery fees stay with Sabu — only merchandise line totals are settled.
+   */
+  async createSettlement(
+    user: AuthUser,
+    body: {
+      vendorId: string;
+      periodStart?: string;
+      periodEnd?: string;
+      entryIds?: string[];
+    },
+  ) {
+    if (!body.vendorId) throw new BadRequestException('vendorId is required');
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const params: unknown[] = [body.vendorId];
+      let filter = `vendor_id = $1 AND settlement_id IS NULL AND status IN ('accrued','finalized')`;
+      if (body.entryIds?.length) {
+        params.push(body.entryIds);
+        filter += ` AND id = ANY($${params.length}::uuid[])`;
+      }
+      const { rows: entries } = await client.query<{
+        id: string;
+        gross_amount: string;
+        commission_amount: string;
+        created_at: Date;
+      }>(
+        `SELECT id, gross_amount::text, commission_amount::text, created_at
+         FROM marketplace.commission_entries
+         WHERE ${filter}
+         ORDER BY created_at
+         FOR UPDATE`,
+        params,
+      );
+      if (!entries.length) {
+        throw new BadRequestException(
+          'No unpaid vendor sales available to settle',
+        );
+      }
+      const gross = entries.reduce((s, e) => s + Number(e.gross_amount), 0);
+      const commission = entries.reduce(
+        (s, e) => s + Number(e.commission_amount),
+        0,
+      );
+      const net = Math.round((gross - commission) * 100) / 100;
+      const periodStart =
+        body.periodStart ??
+        entries[0].created_at.toISOString().slice(0, 10);
+      const periodEnd =
+        body.periodEnd ??
+        entries[entries.length - 1].created_at.toISOString().slice(0, 10);
+      const settlementNumber = await this.nextDocNumber(client, 'STL');
+      const { rows: stl } = await client.query<{ id: string }>(
+        `INSERT INTO marketplace.settlements (
+           settlement_number, vendor_id, period_start, period_end,
+           gross_sales, commission_total, net_payable, status, created_by
+         ) VALUES ($1,$2,$3::date,$4::date,$5,$6,$7,'approved',$8)
+         RETURNING id`,
+        [
+          settlementNumber,
+          body.vendorId,
+          periodStart,
+          periodEnd,
+          Math.round(gross * 100) / 100,
+          Math.round(commission * 100) / 100,
+          net,
+          user.id,
+        ],
+      );
+      const settlementId = stl[0].id;
+      for (const e of entries) {
+        await client.query(
+          `INSERT INTO marketplace.settlement_items (settlement_id, commission_entry_id)
+           VALUES ($1,$2)`,
+          [settlementId, e.id],
+        );
+        await client.query(
+          `UPDATE marketplace.commission_entries
+           SET settlement_id = $2, status = 'paid_out'
+           WHERE id = $1`,
+          [e.id, settlementId],
+        );
+      }
+      await client.query('COMMIT');
+      const all = await this.listSettlements({ vendorId: body.vendorId });
+      return all.find((s) => s.id === settlementId) ?? { id: settlementId };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markSettlementPaid(
+    id: string,
+    body: { payoutReference?: string },
+  ) {
+    const { rowCount } = await this.db.query(
+      `UPDATE marketplace.settlements SET
+         status = 'paid',
+         payout_reference = COALESCE($2, payout_reference),
+         paid_at = now(),
+         updated_at = now()
+       WHERE id = $1 AND status IN ('draft','approved')`,
+      [id, body.payoutReference ?? null],
+    );
+    if (!rowCount) throw new NotFoundException('Settlement not found or already paid');
+    const list = await this.listSettlements();
+    return list.find((s) => s.id === id) ?? null;
   }
 
   async getGlobalCommissionRule() {

@@ -9,6 +9,38 @@ import { loadSession } from "../../lib/session";
 type OrderRow = Awaited<ReturnType<typeof adminApi.listOrders>>[number];
 type OrderDetail = Awaited<ReturnType<typeof adminApi.getOrder>>;
 
+const ORDER_STATUSES = [
+  { value: "pending_payment", label: "Pending payment" },
+  { value: "confirmed", label: "Confirmed" },
+  { value: "processing", label: "Processing" },
+  { value: "ready_for_dispatch", label: "Ready for dispatch" },
+  { value: "dispatched", label: "Dispatched" },
+  { value: "delivered", label: "Delivered" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
+
+/** Suggest the next step — never overwrite current status with a wrong default. */
+function suggestedNextStatus(current: string) {
+  switch (current) {
+    case "pending_payment":
+      return "confirmed";
+    case "confirmed":
+      return "processing";
+    case "processing":
+      return "ready_for_dispatch";
+    case "ready_for_dispatch":
+      return "dispatched";
+    case "dispatched":
+      return "delivered";
+    case "delivered":
+    case "cancelled":
+    case "completed":
+      return current;
+    default:
+      return current || "confirmed";
+  }
+}
+
 export default function OrdersAdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -17,7 +49,7 @@ export default function OrdersAdminPage() {
   const [status, setStatus] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
   const [manualOnly, setManualOnly] = useState(false);
-  const [nextStatus, setNextStatus] = useState("processing");
+  const [nextStatus, setNextStatus] = useState("confirmed");
   const [contactChannel, setContactChannel] = useState("phone");
   const [contactOutcome, setContactOutcome] = useState("reached");
   const [contactNotes, setContactNotes] = useState("");
@@ -52,26 +84,31 @@ export default function OrdersAdminPage() {
   async function openOrder(id: string) {
     if (!token) return;
     setError(null);
+    setMessage(null);
     const d = await adminApi.getOrder(token, id);
     setDetail(d);
-    setNextStatus(
-      d.status === "confirmed"
-        ? "processing"
-        : d.status === "processing"
-          ? "ready_for_dispatch"
-          : "processing",
-    );
+    setNextStatus(suggestedNextStatus(d.status));
   }
 
   async function updateStatus() {
     if (!token || !detail) return;
+    if (!nextStatus) {
+      setError("Select a status first");
+      return;
+    }
+    if (nextStatus === detail.status) {
+      setMessage(`Already ${formatLabel(detail.status)}`);
+      return;
+    }
     setError(null);
     try {
+      const savedStatus = nextStatus;
       const next = await adminApi.updateOrderStatus(token, detail.id, {
-        status: nextStatus,
+        status: savedStatus,
       });
       setDetail(next as OrderDetail);
-      setMessage(`Status → ${nextStatus}`);
+      setNextStatus(suggestedNextStatus(next.status ?? savedStatus));
+      setMessage(`Status updated to ${formatLabel(savedStatus)}`);
       await refresh(token);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Update failed");
@@ -486,20 +523,24 @@ export default function OrdersAdminPage() {
 
                 <div className="border-t border-[#24302a] pt-3">
                   <p className="text-xs text-[#8aa897]">Update status</p>
+                  <p className="mt-1 text-sm text-[#b7c7be]">
+                    Current:{" "}
+                    <span className="text-white">
+                      {formatLabel(detail.status)}
+                    </span>
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <select
                       value={nextStatus}
                       onChange={(e) => setNextStatus(e.target.value)}
                       className="bg-[#17201c] px-3 py-2 text-sm"
                     >
-                      <option value="confirmed">Confirmed</option>
-                      <option value="processing">Processing</option>
-                      <option value="ready_for_dispatch">
-                        Ready for dispatch
-                      </option>
-                      <option value="dispatched">Dispatched</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
+                      {ORDER_STATUSES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                          {s.value === detail.status ? " (current)" : ""}
+                        </option>
+                      ))}
                     </select>
                     <button
                       type="button"

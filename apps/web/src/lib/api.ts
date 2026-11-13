@@ -143,6 +143,7 @@ export type CheckoutBody = {
   locationConfirmed?: boolean;
   paymentMethodId: string;
   telebirrTxnId?: string;
+  companyBankAccountId?: string;
   amountAcknowledged?: boolean;
   preferredContactChannel: ContactChannel;
   contactConsent?: boolean;
@@ -564,12 +565,34 @@ export const api = {
         id: string;
         bankName: string;
         accountName: string;
+        accountNumber: string;
         accountNumberMasked: string;
         currency: string;
         branchName: string | null;
         instructions: string | null;
+        code: string | null;
+        isFeatured: boolean;
+        isActive: boolean;
+        sortOrder: number;
       }>
     >("/payments/bank-accounts");
+  },
+
+  searchPlaces(q: string) {
+    return request<
+      Array<{
+        id: string;
+        name: string;
+        area: string;
+        city: string;
+        placeId: string | null;
+        category: string;
+        lng: number;
+        lat: number;
+        source: "landmark" | "geocode";
+        formattedAddress: string;
+      }>
+    >(`/delivery/places/search?q=${encodeURIComponent(q)}`);
   },
 
   initializeChapa(

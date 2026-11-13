@@ -85,4 +85,34 @@ export class MarketplaceController {
   accrue(@Param('orderId') orderId: string) {
     return this.marketplace.accrueOrderCommissions(orderId);
   }
+
+  @Get('admin/settlements')
+  @RequirePermissions('marketplace.settlements.write')
+  listSettlements(@Query('vendorId') vendorId?: string) {
+    return this.marketplace.listSettlements({ vendorId });
+  }
+
+  @Post('admin/settlements')
+  @RequirePermissions('marketplace.settlements.write')
+  createSettlement(
+    @CurrentUser() user: AuthUser,
+    @Body()
+    body: {
+      vendorId: string;
+      periodStart?: string;
+      periodEnd?: string;
+      entryIds?: string[];
+    },
+  ) {
+    return this.marketplace.createSettlement(user, body);
+  }
+
+  @Post('admin/settlements/:id/mark-paid')
+  @RequirePermissions('marketplace.settlements.write')
+  markPaid(
+    @Param('id') id: string,
+    @Body() body: { payoutReference?: string },
+  ) {
+    return this.marketplace.markSettlementPaid(id, body ?? {});
+  }
 }

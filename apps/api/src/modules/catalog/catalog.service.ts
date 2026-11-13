@@ -643,6 +643,9 @@ export class CatalogService {
       return_instructions: string | null;
       return_policy_description: string | null;
       return_policy_effective_at: Date | null;
+      vendor_id: string | null;
+      vendor_name: string | null;
+      vendor_code: string | null;
     }>(
       `SELECT p.id, p.slug, p.name, p.name_am, p.description, p.status,
               p.retail_number, p.category_id, c.name AS category_name,
@@ -650,10 +653,12 @@ export class CatalogService {
               p.bulk_purchasing_enabled,
               p.returns_allowed, p.return_window_days, p.return_conditions,
               p.return_instructions, p.return_policy_description,
-              p.return_policy_effective_at
+              p.return_policy_effective_at,
+              p.vendor_id, v.display_name AS vendor_name, v.vendor_code
        FROM catalog.products p
        JOIN catalog.categories c ON c.id = p.category_id
        LEFT JOIN catalog.brands b ON b.id = p.brand_id
+       LEFT JOIN marketplace.vendors v ON v.id = p.vendor_id
        WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [productId],
     );
@@ -766,6 +771,9 @@ export class CatalogService {
       returnInstructions: p.return_instructions,
       returnPolicyDescription: p.return_policy_description,
       returnPolicyEffectiveAt: p.return_policy_effective_at,
+      vendorId: p.vendor_id,
+      vendorName: p.vendor_name,
+      vendorCode: p.vendor_code,
       variants: variants.map((v) => {
         const priceTiers = tiersByVariant.get(v.id) ?? [];
         const retail = priceTiers.find(
@@ -799,6 +807,7 @@ export class CatalogService {
     description?: string;
     status?: string;
     bulkPurchasingEnabled?: boolean;
+    vendorId?: string | null;
     actorId?: string;
   }) {
     const client = await this.db.getPool().connect();
@@ -808,8 +817,8 @@ export class CatalogService {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO catalog.products (
            category_id, brand_id, slug, name, name_am, description, status,
-           bulk_purchasing_enabled, created_by, retail_number
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           bulk_purchasing_enabled, vendor_id, created_by, retail_number
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING id`,
         [
           input.categoryId,
@@ -820,6 +829,7 @@ export class CatalogService {
           input.description ?? null,
           input.status ?? 'draft',
           input.bulkPurchasingEnabled ?? false,
+          input.vendorId ?? null,
           input.actorId ?? null,
           retailNumber,
         ],
@@ -856,6 +866,7 @@ export class CatalogService {
       returnInstructions?: string | null;
       returnPolicyDescription?: string | null;
       returnPolicyEffectiveAt?: string | null;
+      vendorId?: string | null;
     },
   ) {
     if (input.categoryIds?.length || input.categoryId) {
@@ -886,6 +897,7 @@ export class CatalogService {
            WHEN $18::boolean THEN COALESCE($19::timestamptz, now())
            ELSE return_policy_effective_at
          END,
+         vendor_id = CASE WHEN $20::boolean THEN $21::uuid ELSE vendor_id END,
          updated_at = now()
        WHERE id = $1 AND deleted_at IS NULL`,
       [
@@ -910,6 +922,8 @@ export class CatalogService {
           input.returnWindowDays !== undefined ||
           input.returnPolicyDescription !== undefined,
         input.returnPolicyEffectiveAt ?? null,
+        input.vendorId !== undefined,
+        input.vendorId ?? null,
       ],
     );
     if (!rowCount) throw new NotFoundException('Product not found');

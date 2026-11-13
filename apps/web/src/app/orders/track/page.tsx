@@ -77,8 +77,8 @@ function TrackInner() {
             Track order
           </h1>
           <p className="text-sabu-moss">
-            Use your order number with the secure track token from your
-            confirmation page, or verify with the phone used at checkout.
+            Enter your order number and the tracking code from your order
+            confirmation, or look it up with the phone number used at checkout.
           </p>
           <div className="flex gap-2 text-xs">
             <button
@@ -86,39 +86,48 @@ function TrackInner() {
               onClick={() => setMode("token")}
               className={`px-3 py-1.5 ${mode === "token" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
             >
-              Track token
+              Tracking code
             </button>
             <button
               type="button"
               onClick={() => setMode("phone")}
               className={`px-3 py-1.5 ${mode === "phone" ? "bg-sabu-leaf text-sabu-cream" : "border border-sabu-mist text-sabu-moss"}`}
             >
-              Phone verification
+              Phone number
             </button>
           </div>
-          <input
-            required
-            value={orderNumber}
-            onChange={(e) => setOrderNumber(e.target.value)}
-            placeholder="SABU-2026-000001"
-            className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
-          />
+          <label className="block text-sm text-sabu-moss">
+            Order number
+            <input
+              required
+              value={orderNumber}
+              onChange={(e) => setOrderNumber(e.target.value)}
+              placeholder="e.g. SABU-2026-000001"
+              className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+            />
+          </label>
           {mode === "token" ? (
-            <input
-              required
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Track token"
-              className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
-            />
+            <label className="block text-sm text-sabu-moss">
+              Tracking code
+              <input
+                required
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="From your order confirmation"
+                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+              />
+            </label>
           ) : (
-            <input
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+2519..."
-              className="w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
-            />
+            <label className="block text-sm text-sabu-moss">
+              Phone used at checkout
+              <input
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+251 9…"
+                className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-3 outline-none"
+              />
+            </label>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
           <button
@@ -126,7 +135,7 @@ function TrackInner() {
             disabled={busy}
             className="w-full bg-sabu-leaf px-5 py-3 text-sm text-sabu-cream disabled:opacity-60"
           >
-            {busy ? "Looking up…" : "Look up"}
+            {busy ? "Finding your order…" : "Find my order"}
           </button>
         </form>
       </main>

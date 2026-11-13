@@ -7,11 +7,29 @@ import { loadSession } from "../../lib/session";
 
 type Pending = Awaited<ReturnType<typeof adminApi.pendingVerifications>>[number];
 type Telebirr = Awaited<ReturnType<typeof adminApi.getTelebirrSettings>>;
+type BankAccount = Awaited<
+  ReturnType<typeof adminApi.listAdminBankAccounts>
+>[number];
+
+const emptyBankForm = {
+  id: "" as string | undefined,
+  bankName: "",
+  accountName: "",
+  accountNumber: "",
+  branchName: "",
+  instructions: "",
+  code: "",
+  isFeatured: false,
+  isActive: true,
+  sortOrder: 100,
+};
 
 export default function PaymentsAdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [rows, setRows] = useState<Pending[]>([]);
   const [telebirr, setTelebirr] = useState<Telebirr | null>(null);
+  const [banks, setBanks] = useState<BankAccount[]>([]);
+  const [bankForm, setBankForm] = useState(emptyBankForm);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
@@ -21,12 +39,14 @@ export default function PaymentsAdminPage() {
   const [focusOrderId, setFocusOrderId] = useState<string | null>(null);
 
   async function load(t: string) {
-    const [data, settings] = await Promise.all([
+    const [data, settings, bankRows] = await Promise.all([
       adminApi.pendingVerifications(t),
       adminApi.getTelebirrSettings(t),
+      adminApi.listAdminBankAccounts(t),
     ]);
     setRows(data);
     setTelebirr(settings);
+    setBanks(bankRows);
   }
 
   useEffect(() => {
@@ -127,6 +147,69 @@ export default function PaymentsAdminPage() {
     }
   }
 
+  function editBank(b: BankAccount) {
+    setBankForm({
+      id: b.id,
+      bankName: b.bankName,
+      accountName: b.accountName,
+      accountNumber: b.accountNumber,
+      branchName: b.branchName ?? "",
+      instructions: b.instructions ?? "",
+      code: b.code ?? "",
+      isFeatured: b.isFeatured,
+      isActive: b.isActive,
+      sortOrder: b.sortOrder,
+    });
+  }
+
+  async function saveBank(e: FormEvent) {
+    e.preventDefault();
+    if (!token) return;
+    setError(null);
+    try {
+      await adminApi.saveAdminBankAccount(token, {
+        id: bankForm.id || undefined,
+        bankName: bankForm.bankName.trim(),
+        accountName: bankForm.accountName.trim(),
+        accountNumber: bankForm.accountNumber.trim(),
+        branchName: bankForm.branchName.trim() || null,
+        instructions: bankForm.instructions.trim() || null,
+        code: bankForm.code.trim() || null,
+        isFeatured: bankForm.isFeatured,
+        isActive: bankForm.isActive,
+        sortOrder: Number(bankForm.sortOrder) || 100,
+      });
+      setMessage(bankForm.id ? "Bank account updated" : "Bank account added");
+      setBankForm(emptyBankForm);
+      await load(token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Bank save failed");
+    }
+  }
+
+  async function toggleBankActive(b: BankAccount) {
+    if (!token) return;
+    setError(null);
+    try {
+      await adminApi.saveAdminBankAccount(token, {
+        id: b.id,
+        bankName: b.bankName,
+        accountName: b.accountName,
+        accountNumber: b.accountNumber,
+        branchName: b.branchName,
+        instructions: b.instructions,
+        code: b.code,
+        isFeatured: b.isFeatured,
+        isActive: !b.isActive,
+        sortOrder: b.sortOrder,
+      });
+      setMessage(b.isActive ? "Bank deactivated" : "Bank activated");
+      await load(token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Update failed");
+    }
+  }
+
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
@@ -215,6 +298,192 @@ export default function PaymentsAdminPage() {
           </form>
         )}
 
+        <section className="space-y-4 border border-[#24302a] p-4">
+          <div>
+            <h2 className="text-xl">Bank payment accounts</h2>
+            <p className="mt-1 text-sm text-[#9eb0a6]">
+              Configure CBE and other Ethiopian banks shown at checkout. Only
+              active accounts appear under Other Banks. Mark one as featured for
+              the dedicated CBE option.
+            </p>
+          </div>
+
+          <ul className="divide-y divide-[#24302a] text-sm">
+            {banks.length === 0 && (
+              <li className="py-3 text-[#8aa897]">No bank accounts yet</li>
+            )}
+            {banks.map((b) => (
+              <li
+                key={b.id}
+                className="flex flex-wrap items-start justify-between gap-3 py-3"
+              >
+                <div className="space-y-1">
+                  <p className="text-white">
+                    {b.bankName}
+                    {b.isFeatured && (
+                      <span className="ml-2 text-xs text-[#2f6b4f]">
+                        featured / CBE
+                      </span>
+                    )}
+                    {!b.isActive && (
+                      <span className="ml-2 text-xs text-red-400">inactive</span>
+                    )}
+                  </p>
+                  <p className="text-[#b7c7be]">
+                    {b.accountName} · {b.accountNumber}
+                  </p>
+                  <p className="text-xs text-[#6f8078]">
+                    Order {b.sortOrder}
+                    {b.code ? ` · code ${b.code}` : ""}
+                    {b.branchName ? ` · ${b.branchName}` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => editBank(b)}
+                    className="border border-[#24302a] px-3 py-1.5 text-sm"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleBankActive(b)}
+                    className="border border-[#24302a] px-3 py-1.5 text-sm"
+                  >
+                    {b.isActive ? "Deactivate" : "Activate"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <form onSubmit={saveBank} className="space-y-3 border-t border-[#24302a] pt-4">
+            <h3 className="text-lg">
+              {bankForm.id ? "Edit bank account" : "Add bank account"}
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm text-[#9eb0a6]">
+                Bank name
+                <input
+                  required
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                  value={bankForm.bankName}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, bankName: e.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm text-[#9eb0a6]">
+                Account holder
+                <input
+                  required
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                  value={bankForm.accountName}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, accountName: e.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm text-[#9eb0a6]">
+                Account number
+                <input
+                  required
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 font-mono text-[#eef2ef]"
+                  value={bankForm.accountNumber}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, accountNumber: e.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm text-[#9eb0a6]">
+                Branch (optional)
+                <input
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                  value={bankForm.branchName}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, branchName: e.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm text-[#9eb0a6]">
+                Code (e.g. cbe)
+                <input
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                  value={bankForm.code}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, code: e.target.value })
+                  }
+                />
+              </label>
+              <label className="block text-sm text-[#9eb0a6]">
+                Display order
+                <input
+                  type="number"
+                  className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                  value={bankForm.sortOrder}
+                  onChange={(e) =>
+                    setBankForm({
+                      ...bankForm,
+                      sortOrder: Number(e.target.value) || 0,
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <label className="block text-sm text-[#9eb0a6]">
+              Payment instructions
+              <textarea
+                rows={2}
+                className="mt-1 w-full border border-[#24302a] bg-transparent px-3 py-2 text-[#eef2ef]"
+                value={bankForm.instructions}
+                onChange={(e) =>
+                  setBankForm({ ...bankForm, instructions: e.target.value })
+                }
+              />
+            </label>
+            <div className="flex flex-wrap gap-4 text-sm text-[#b7c7be]">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={bankForm.isFeatured}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, isFeatured: e.target.checked })
+                  }
+                />
+                Featured (CBE checkout option)
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={bankForm.isActive}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, isActive: e.target.checked })
+                  }
+                />
+                Active
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="bg-[#2f6b4f] px-4 py-2 text-sm text-white"
+              >
+                {bankForm.id ? "Update bank account" : "Add bank account"}
+              </button>
+              {bankForm.id && (
+                <button
+                  type="button"
+                  onClick={() => setBankForm(emptyBankForm)}
+                  className="border border-[#24302a] px-4 py-2 text-sm"
+                >
+                  Cancel edit
+                </button>
+              )}
+            </div>
+          </form>
+        </section>
+
         {focusOrderId && (
           <p className="text-sm text-[#9dcdb4]">
             Focusing order from dashboard ·{" "}
@@ -268,7 +537,12 @@ export default function PaymentsAdminPage() {
                     </strong>
                   </p>
                   <p className="text-[#8aa897]">
-                    TXN: {r.telebirrTxnId ?? r.customerReference ?? "—"}
+                    {r.bankName ? `Bank: ${r.bankName} · ` : ""}
+                    TXN:{" "}
+                    {r.telebirrTxnId ??
+                      r.providerReference ??
+                      r.customerReference ??
+                      "—"}
                     {r.duplicateFlag ? " · DUPLICATE FLAG" : ""}
                   </p>
                   <ul className="text-xs text-[#9eb0a6]">

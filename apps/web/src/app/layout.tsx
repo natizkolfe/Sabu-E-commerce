@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Manrope, Syne } from "next/font/google";
 import { AuthProvider } from "../context/auth-context";
 import { CartProvider } from "../context/cart-context";
@@ -35,7 +36,9 @@ export default function RootLayout({
       >
         <AuthProvider>
           <CartProvider>
-            <SiteHeader />
+            <Suspense fallback={null}>
+              <SiteHeader />
+            </Suspense>
             {children}
             <SiteFooter />
           </CartProvider>

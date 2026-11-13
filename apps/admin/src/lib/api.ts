@@ -651,6 +651,9 @@ export const adminApi = {
       returnInstructions?: string | null;
       returnPolicyDescription?: string | null;
       returnPolicyEffectiveAt?: string | null;
+      vendorId?: string | null;
+      vendorName?: string | null;
+      vendorCode?: string | null;
       variants: Array<{
         id: string;
         sku: string;
@@ -682,6 +685,7 @@ export const adminApi = {
       description?: string;
       status?: string;
       bulkPurchasingEnabled?: boolean;
+      vendorId?: string | null;
     },
   ) {
     return request<{ id: string; retailNumber?: string }>(
@@ -711,6 +715,7 @@ export const adminApi = {
       returnConditions?: string | null;
       returnInstructions?: string | null;
       returnPolicyDescription?: string | null;
+      vendorId?: string | null;
     },
   ) {
     return request(`/catalog/admin/products/${id}`, {
@@ -867,6 +872,54 @@ export const adminApi = {
   ) {
     return request("/payments/admin/telebirr/settings", {
       method: "PUT",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  listAdminBankAccounts(token: string) {
+    return request<
+      Array<{
+        id: string;
+        bankName: string;
+        accountName: string;
+        accountNumber: string;
+        accountNumberMasked: string;
+        currency: string;
+        branchName: string | null;
+        instructions: string | null;
+        code: string | null;
+        isFeatured: boolean;
+        isActive: boolean;
+        sortOrder: number;
+      }>
+    >("/payments/admin/bank-accounts", { token });
+  },
+
+  saveAdminBankAccount(
+    token: string,
+    body: {
+      id?: string;
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      branchName?: string | null;
+      instructions?: string | null;
+      code?: string | null;
+      isFeatured?: boolean;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    if (body.id) {
+      return request(`/payments/admin/bank-accounts/${body.id}`, {
+        method: "PUT",
+        token,
+        body: JSON.stringify(body),
+      });
+    }
+    return request("/payments/admin/bank-accounts", {
+      method: "POST",
       token,
       body: JSON.stringify(body),
     });
@@ -1417,20 +1470,23 @@ export const adminApi = {
     });
   },
 
-  listCommissions(token: string) {
+  listCommissions(token: string, vendorId?: string) {
+    const qs = vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : "";
     return request<
       Array<{
         id: string;
         orderNumber: string;
+        vendorId: string;
         vendorName: string;
         grossAmount: number;
         ratePct: number;
         commissionAmount: number;
+        netPayable: number;
         status: string;
         entryType: string;
         createdAt: string;
       }>
-    >("/marketplace/admin/commissions", { token });
+    >(`/marketplace/admin/commissions${qs}`, { token });
   },
 
   commissionRule(token: string) {
@@ -1438,6 +1494,50 @@ export const adminApi = {
       "/marketplace/admin/commission-rule",
       { token },
     );
+  },
+
+  listSettlements(token: string, vendorId?: string) {
+    const qs = vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : "";
+    return request<
+      Array<{
+        id: string;
+        settlementNumber: string;
+        vendorId: string;
+        vendorName: string;
+        periodStart: string;
+        periodEnd: string;
+        grossSales: number;
+        commissionTotal: number;
+        netPayable: number;
+        status: string;
+        payoutReference: string | null;
+        paidAt: string | null;
+        createdAt: string;
+      }>
+    >(`/marketplace/admin/settlements${qs}`, { token });
+  },
+
+  createSettlement(
+    token: string,
+    body: { vendorId: string; periodStart?: string; periodEnd?: string },
+  ) {
+    return request("/marketplace/admin/settlements", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  markSettlementPaid(
+    token: string,
+    id: string,
+    body?: { payoutReference?: string },
+  ) {
+    return request(`/marketplace/admin/settlements/${id}/mark-paid`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body ?? {}),
+    });
   },
 
   listSpecialOrders(token: string, status?: string) {

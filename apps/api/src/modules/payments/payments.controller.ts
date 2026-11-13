@@ -162,6 +162,53 @@ export class PaymentsController {
     return this.paymentsService.listBankAccounts();
   }
 
+  @Get('admin/bank-accounts')
+  @RequirePermissions('payments.verify')
+  adminBankAccounts() {
+    return this.paymentsService.listBankAccounts({ includeInactive: true });
+  }
+
+  @Post('admin/bank-accounts')
+  @RequirePermissions('payments.verify')
+  createBankAccount(
+    @CurrentUser() user: AuthUser,
+    @Body()
+    body: {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      branchName?: string | null;
+      instructions?: string | null;
+      code?: string | null;
+      isFeatured?: boolean;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.paymentsService.upsertBankAccount(user, body);
+  }
+
+  @Put('admin/bank-accounts/:id')
+  @RequirePermissions('payments.verify')
+  updateBankAccount(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      branchName?: string | null;
+      instructions?: string | null;
+      code?: string | null;
+      isFeatured?: boolean;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+  ) {
+    return this.paymentsService.upsertBankAccount(user, { ...body, id });
+  }
+
   @Public()
   @Post('intents/:id/chapa/initialize')
   initializeChapa(
