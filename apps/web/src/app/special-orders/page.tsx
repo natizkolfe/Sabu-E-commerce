@@ -390,7 +390,7 @@ export default function SpecialOrderRequestPage() {
               )}
             </fieldset>
 
-            <label className="block text-sm">
+            <label className="flex flex-col text-sm">
               <span className="text-sabu-moss">Quantity</span>
               <input
                 type="number"
@@ -400,7 +400,7 @@ export default function SpecialOrderRequestPage() {
                 onChange={(e) =>
                   setQuantity(Math.max(1, Math.floor(Number(e.target.value) || 1)))
                 }
-                className="mt-1 w-28 border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
+                className="mt-2 w-28 border-b border-sabu-moss/40 bg-transparent py-3 outline-none focus:border-sabu-leaf"
               />
             </label>
 

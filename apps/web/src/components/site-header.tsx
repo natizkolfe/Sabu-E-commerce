@@ -28,7 +28,7 @@ const links = [
     match: "onSale" as const,
   },
   {
-    href: "/#special-orders",
+    href: "/special-orders",
     label: "Special Orders",
     match: "specialOrders" as const,
   },
@@ -106,7 +106,10 @@ export function SiteHeader() {
       case "onSale":
         return pathname === "/catalog" && onSale === "1";
       case "specialOrders":
-        return pathname === "/" && hash === "#special-orders";
+        return (
+          pathname.startsWith("/special-orders") ||
+          (pathname === "/" && hash === "#special-orders")
+        );
       case "track":
         return pathname.startsWith("/orders/track");
       default:
@@ -217,7 +220,7 @@ export function SiteHeader() {
           >
             Cart{itemCount > 0 ? ` (${itemCount})` : ""}
           </Link>
-          {!ready ? null : user ? (
+          {ready && user ? (
             <Link
               href="/account"
               className={`rounded-sm px-3 py-2 transition ${
@@ -272,10 +275,10 @@ export function SiteHeader() {
             }`}
             aria-current={cartActive ? "page" : undefined}
           >
-            Cart{itemCount > 0 ? ` (${itemCount})` : ""}
+            Cart{ready && itemCount > 0 ? ` (${itemCount})` : ""}
           </Link>
           <Link
-            href={user ? "/account" : "/login"}
+            href={ready && user ? "/account" : "/login"}
             className={`rounded-sm px-2.5 py-1.5 text-sm ${
               onHero
                 ? "bg-sabu-cream text-sabu-ink"
@@ -283,7 +286,7 @@ export function SiteHeader() {
             } ${accountActive ? "ring-2 ring-sabu-leaf/50" : ""}`}
             aria-current={accountActive ? "page" : undefined}
           >
-            {user ? user.fullName.split(" ")[0] : "Sign in"}
+            {ready && user ? user.fullName.split(" ")[0] : "Sign in"}
           </Link>
         </div>
       </div>
