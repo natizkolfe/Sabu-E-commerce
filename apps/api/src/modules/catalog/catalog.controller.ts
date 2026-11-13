@@ -11,13 +11,17 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { CatalogService } from './catalog.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
@@ -145,6 +149,13 @@ class CreateVariantDto {
 
   @IsOptional()
   options?: Record<string, unknown>;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  initialStockQty?: number;
 }
 
 class UpdateVariantDto {
@@ -158,6 +169,14 @@ class UpdateVariantDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+class SetVariantStockDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  qtyOnHand!: number;
 }
 
 class SetAttributesDto {
@@ -592,6 +611,12 @@ export class CatalogController {
   @RequirePermissions('catalog.write')
   updateVariant(@Param('id') id: string, @Body() dto: UpdateVariantDto) {
     return this.catalogService.updateVariant(id, dto);
+  }
+
+  @Post('admin/variants/:id/stock')
+  @RequirePermissions('catalog.write')
+  setVariantStock(@Param('id') id: string, @Body() dto: SetVariantStockDto) {
+    return this.catalogService.setVariantStock(id, dto.qtyOnHand);
   }
 
   @Get('admin/attributes')

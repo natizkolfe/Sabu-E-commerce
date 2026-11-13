@@ -663,6 +663,9 @@ export const adminApi = {
         wholesaleQty10: number | null;
         isActive: boolean;
         minOrderQtyWholesale: number;
+        qtyOnHand?: number;
+        qtyReserved?: number;
+        qtyAvailable?: number;
         priceTiers: Array<{
           listCode: string;
           minQty: number;
@@ -757,6 +760,20 @@ export const adminApi = {
       method: "PATCH",
       token,
       body: JSON.stringify(body),
+    });
+  },
+
+  setVariantStock(token: string, variantId: string, qtyOnHand: number) {
+    return request<{
+      ok: boolean;
+      variantId: string;
+      qtyOnHand: number;
+      qtyReserved: number;
+      qtyAvailable: number;
+    }>(`/catalog/admin/variants/${variantId}/stock`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ qtyOnHand }),
     });
   },
 

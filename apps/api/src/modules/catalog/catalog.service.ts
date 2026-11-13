@@ -687,10 +687,17 @@ export class CatalogService {
       options: Record<string, unknown>;
       is_active: boolean;
       min_order_qty_wholesale: number;
+      qty_on_hand: string | null;
+      qty_reserved: string | null;
     }>(
       `SELECT pv.id, pv.sku, pv.variant_name, pv.options, pv.is_active,
-              pv.min_order_qty_wholesale
+              pv.min_order_qty_wholesale,
+              sb.qty_on_hand::text, sb.qty_reserved::text
        FROM catalog.product_variants pv
+       LEFT JOIN inventory.warehouses w
+         ON w.code = 'ADD-MAIN' AND w.is_active AND w.is_sellable
+       LEFT JOIN inventory.stock_balances sb
+         ON sb.variant_id = pv.id AND sb.warehouse_id = w.id
        WHERE pv.product_id = $1 AND pv.deleted_at IS NULL
        ORDER BY pv.sku`,
       [productId],
@@ -782,6 +789,8 @@ export class CatalogService {
         const wholesale10 = priceTiers.find(
           (t) => t.listCode === 'WHOLESALE-ETB' && t.minQty === 10,
         );
+        const onHand = v.qty_on_hand != null ? Number(v.qty_on_hand) : 0;
+        const reserved = v.qty_reserved != null ? Number(v.qty_reserved) : 0;
         return {
           id: v.id,
           sku: v.sku,
@@ -792,6 +801,9 @@ export class CatalogService {
           retailPrice: retail?.unitPrice ?? null,
           wholesaleQty10: wholesale10?.unitPrice ?? null,
           priceTiers,
+          qtyOnHand: onHand,
+          qtyReserved: reserved,
+          qtyAvailable: Math.max(0, onHand - reserved),
         };
       }),
     };
@@ -935,6 +947,7 @@ export class CatalogService {
     sku?: string;
     variantName?: string;
     options?: Record<string, unknown>;
+    initialStockQty?: number;
   }) {
     const { rows: products } = await this.db.query<{
       id: string;
@@ -976,6 +989,10 @@ export class CatalogService {
         options,
       ));
 
+    const initialStock = Math.max(
+      0,
+      Math.floor(Number(input.initialStockQty ?? 50)),
+    );
     const { rows } = await this.db.query<{ id: string }>(
       `INSERT INTO catalog.product_variants (
          product_id, sku, variant_name, options
@@ -988,7 +1005,9 @@ export class CatalogService {
         JSON.stringify(options),
       ],
     );
-    return { id: rows[0].id, sku, retailNumber };
+    const variantId = rows[0].id;
+    await this.ensureAddMainStock(variantId, initialStock);
+    return { id: variantId, sku, retailNumber, qtyOnHand: initialStock };
   }
 
   async updateVariant(
@@ -1014,6 +1033,65 @@ export class CatalogService {
     );
     if (!rowCount) throw new NotFoundException('Variant not found');
     return { ok: true };
+  }
+
+  async setVariantStock(variantId: string, qtyOnHand: number) {
+    const qty = Math.max(0, Math.floor(Number(qtyOnHand)));
+    if (!Number.isFinite(qty)) {
+      throw new BadRequestException('Stock quantity must be a number');
+    }
+    const { rows } = await this.db.query<{ id: string }>(
+      `SELECT id FROM catalog.product_variants
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [variantId],
+    );
+    if (!rows[0]) throw new NotFoundException('Variant not found');
+
+    const { rows: warehouses } = await this.db.query<{ id: string }>(
+      `SELECT id FROM inventory.warehouses
+       WHERE code = 'ADD-MAIN' AND is_active AND is_sellable LIMIT 1`,
+    );
+    if (!warehouses[0]) {
+      throw new BadRequestException('Sellable warehouse ADD-MAIN is missing');
+    }
+
+    const { rows: bal } = await this.db.query<{
+      qty_on_hand: string;
+      qty_reserved: string;
+    }>(
+      `INSERT INTO inventory.stock_balances (
+         warehouse_id, variant_id, qty_on_hand, qty_reserved, reorder_point, reorder_qty
+       ) VALUES ($1,$2,$3,0,5,20)
+       ON CONFLICT (warehouse_id, variant_id) DO UPDATE
+         SET qty_on_hand = EXCLUDED.qty_on_hand,
+             version = inventory.stock_balances.version + 1,
+             updated_at = now()
+       RETURNING qty_on_hand::text, qty_reserved::text`,
+      [warehouses[0].id, variantId, qty],
+    );
+    const onHand = Number(bal[0].qty_on_hand);
+    const reserved = Number(bal[0].qty_reserved);
+    return {
+      ok: true,
+      variantId,
+      qtyOnHand: onHand,
+      qtyReserved: reserved,
+      qtyAvailable: Math.max(0, onHand - reserved),
+    };
+  }
+
+  private async ensureAddMainStock(variantId: string, qtyOnHand: number) {
+    const qty = Math.max(0, Math.floor(qtyOnHand));
+    await this.db.query(
+      `INSERT INTO inventory.stock_balances (
+         warehouse_id, variant_id, qty_on_hand, qty_reserved, reorder_point, reorder_qty
+       )
+       SELECT w.id, $1::uuid, $2, 0, 5, 20
+       FROM inventory.warehouses w
+       WHERE w.code = 'ADD-MAIN' AND w.is_active AND w.is_sellable
+       ON CONFLICT (warehouse_id, variant_id) DO NOTHING`,
+      [variantId, qty],
+    );
   }
 
   async listAttributes() {

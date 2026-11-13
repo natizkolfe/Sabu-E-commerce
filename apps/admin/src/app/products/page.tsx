@@ -84,6 +84,7 @@ export default function ProductsAdminPage() {
   const [minQty, setMinQty] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
   const [compareAt, setCompareAt] = useState("");
+  const [stockQty, setStockQty] = useState("50");
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +158,7 @@ export default function ProductsAdminPage() {
     setEditReturnDescription(p.returnPolicyDescription ?? "");
     setVariantId(p.variants[0]?.id ?? "");
     const first = p.variants[0];
+    setStockQty(String(first?.qtyOnHand ?? 50));
     if (first?.retailPrice != null) {
       setListCode("RETAIL-ETB");
       setMinQty("1");
@@ -309,6 +311,29 @@ export default function ProductsAdminPage() {
       if (selectedId) await openProduct(selectedId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Price failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveStock(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !variantId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await adminApi.setVariantStock(
+        token,
+        variantId,
+        Math.max(0, Math.floor(Number(stockQty) || 0)),
+      );
+      setStockQty(String(res.qtyOnHand));
+      setMessage(
+        `Stock set to ${res.qtyOnHand} on hand (${res.qtyAvailable} available)`,
+      );
+      if (selectedId) await openProduct(selectedId);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Stock update failed");
     } finally {
       setBusy(false);
     }
@@ -1125,6 +1150,7 @@ export default function ProductsAdminPage() {
                           <th className="py-1 pr-2 font-normal">Name</th>
                           <th className="py-1 pr-2 font-normal">Retail</th>
                           <th className="py-1 pr-2 font-normal">W10</th>
+                          <th className="py-1 pr-2 font-normal">Stock</th>
                           <th className="py-1 font-normal">Active</th>
                         </tr>
                       </thead>
@@ -1149,6 +1175,7 @@ export default function ProductsAdminPage() {
                                       ? String(v.retailPrice)
                                       : "",
                                   );
+                                  setStockQty(String(v.qtyOnHand ?? 0));
                                 }}
                               >
                                 {v.sku}
@@ -1162,6 +1189,12 @@ export default function ProductsAdminPage() {
                             </td>
                             <td className="py-2 pr-2">
                               {v.wholesaleQty10 ?? "—"}
+                            </td>
+                            <td className="py-2 pr-2">
+                              {v.qtyAvailable ?? 0}
+                              {(v.qtyReserved ?? 0) > 0
+                                ? ` (${v.qtyReserved} reserved)`
+                                : ""}
                             </td>
                             <td className="py-2">
                               <button
@@ -1207,6 +1240,40 @@ export default function ProductsAdminPage() {
                       className="border border-[#24302a] px-3 py-2 text-sm disabled:opacity-60"
                     >
                       Add variant
+                    </button>
+                  </form>
+                </div>
+
+                <div className="border-t border-[#24302a] pt-4">
+                  <h3 className="text-sm text-[#8aa897]">
+                    Sellable stock (ADD-MAIN)
+                    {selectedVariant ? ` · ${selectedVariant.sku}` : ""}
+                  </h3>
+                  <p className="mt-1 text-[11px] text-[#8aa897]">
+                    Checkout reserves from this warehouse. New variants start
+                    with 50 units; set 0 to stop sales.
+                  </p>
+                  <form
+                    onSubmit={saveStock}
+                    className="mt-3 flex flex-wrap items-end gap-2"
+                  >
+                    <label className="text-xs text-[#8aa897]">
+                      Qty on hand
+                      <input
+                        value={stockQty}
+                        onChange={(e) =>
+                          setStockQty(e.target.value.replace(/[^\d]/g, ""))
+                        }
+                        inputMode="numeric"
+                        className="mt-1 block w-28 bg-[#17201c] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={busy || !variantId}
+                      className="bg-[#2f6b4f] px-4 py-2 text-sm disabled:opacity-60"
+                    >
+                      Save stock
                     </button>
                   </form>
                 </div>
