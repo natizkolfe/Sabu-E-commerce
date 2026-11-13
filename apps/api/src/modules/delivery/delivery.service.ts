@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -26,6 +27,7 @@ function round1(n: number) {
 @Injectable()
 export class DeliveryService {
   readonly schema = 'delivery' as const;
+  private readonly logger = new Logger(DeliveryService.name);
 
   constructor(
     private readonly db: DatabaseService,
@@ -1354,19 +1356,6 @@ export class DeliveryService {
    */
   async searchPlaces(q: string) {
     const query = q.trim();
-    if (query.length < 2) return [] as Array<{
-      id: string;
-      name: string;
-      area: string;
-      city: string;
-      placeId: string | null;
-      category: string;
-      lng: number;
-      lat: number;
-      source: 'landmark' | 'geocode';
-      formattedAddress: string;
-    }>;
-
     type PlaceHit = {
       id: string;
       name: string;
@@ -1379,7 +1368,10 @@ export class DeliveryService {
       source: 'landmark' | 'geocode';
       formattedAddress: string;
     };
+    if (query.length < 2) return [] as PlaceHit[];
 
+    // Local seeded landmarks first (always available on Railway even if
+    // outbound geocoders are blocked).
     const local = await this.listLandmarks({ q: query, city: 'Addis Ababa' });
     const results: PlaceHit[] = local.slice(0, 6).map((r) => ({
       ...r,
@@ -1387,61 +1379,10 @@ export class DeliveryService {
       formattedAddress: `${r.name}, ${r.area}, ${r.city}`,
     }));
 
-    let remote: PlaceHit[] = [];
-    try {
-      const url = new URL('https://nominatim.openstreetmap.org/search');
-      url.searchParams.set('q', `${query}, Addis Ababa, Ethiopia`);
-      url.searchParams.set('format', 'json');
-      url.searchParams.set('addressdetails', '1');
-      url.searchParams.set('limit', '8');
-      url.searchParams.set('countrycodes', 'et');
-      const res = await fetch(url.toString(), {
-        headers: {
-          'User-Agent': 'SabuEcommerce/1.0 (checkout delivery search)',
-          Accept: 'application/json',
-        },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as Array<{
-          place_id: number;
-          display_name: string;
-          lat: string;
-          lon: string;
-          type?: string;
-          class?: string;
-          address?: Record<string, string>;
-        }>;
-        remote = data.map((d) => {
-          const addr = d.address ?? {};
-          const area =
-            addr.suburb ||
-            addr.neighbourhood ||
-            addr.city_district ||
-            addr.town ||
-            'Addis Ababa';
-          const name =
-            addr.amenity ||
-            addr.shop ||
-            addr.building ||
-            addr.road ||
-            d.display_name.split(',')[0] ||
-            query;
-          return {
-            id: `osm-${d.place_id}`,
-            name,
-            area,
-            city: addr.city || addr.state || 'Addis Ababa',
-            placeId: `nominatim:${d.place_id}`,
-            category: d.type || d.class || 'place',
-            lng: Number(d.lon),
-            lat: Number(d.lat),
-            source: 'geocode' as const,
-            formattedAddress: d.display_name,
-          };
-        });
-      }
-    } catch {
-      // Offline / rate-limit: fall back to landmarks only
+    // Photon (Komoot) works more reliably from cloud hosts than Nominatim.
+    let remote = await this.geocodeViaPhoton(query);
+    if (!remote.length) {
+      remote = await this.geocodeViaNominatim(query);
     }
 
     const seen = new Set(results.map((x) => x.formattedAddress.toLowerCase()));
@@ -1453,6 +1394,176 @@ export class DeliveryService {
       }
     }
     return results.slice(0, 12);
+  }
+
+  private async geocodeViaPhoton(query: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      area: string;
+      city: string;
+      placeId: string | null;
+      category: string;
+      lng: number;
+      lat: number;
+      source: 'geocode';
+      formattedAddress: string;
+    }>
+  > {
+    try {
+      const url = new URL('https://photon.komoot.io/api/');
+      url.searchParams.set('q', `${query}, Addis Ababa`);
+      url.searchParams.set('lat', '9.03');
+      url.searchParams.set('lon', '38.74');
+      url.searchParams.set('limit', '8');
+      url.searchParams.set('lang', 'en');
+      const res = await fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'SabuEcommerce/1.0 (https://sabu.et; delivery search)',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        this.logger.warn(`Photon geocode HTTP ${res.status}`);
+        return [];
+      }
+      const data = (await res.json()) as {
+        features?: Array<{
+          geometry?: { coordinates?: [number, number] };
+          properties?: {
+            osm_id?: number;
+            osm_type?: string;
+            name?: string;
+            street?: string;
+            district?: string;
+            suburb?: string;
+            city?: string;
+            state?: string;
+            country?: string;
+            countrycode?: string;
+            type?: string;
+            housenumber?: string;
+          };
+        }>;
+      };
+      return (data.features ?? [])
+        .map((f) => {
+          const p = f.properties ?? {};
+          const coords = f.geometry?.coordinates;
+          if (!coords || coords.length < 2) return null;
+          const [lng, lat] = coords;
+          const cc = (p.countrycode ?? '').toLowerCase();
+          if (cc && cc !== 'et') return null;
+          const name =
+            p.name ||
+            [p.street, p.housenumber].filter(Boolean).join(' ') ||
+            query;
+          const area = p.district || p.suburb || p.city || 'Addis Ababa';
+          const city = p.city || p.state || 'Addis Ababa';
+          const formatted = [name, area, city, p.country || 'Ethiopia']
+            .filter(Boolean)
+            .join(', ');
+          return {
+            id: `photon-${p.osm_type ?? 'n'}-${p.osm_id ?? `${lng},${lat}`}`,
+            name,
+            area,
+            city,
+            placeId: p.osm_id
+              ? `photon:${p.osm_type ?? 'n'}:${p.osm_id}`
+              : null,
+            category: p.type || 'place',
+            lng,
+            lat,
+            source: 'geocode' as const,
+            formattedAddress: formatted,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x != null);
+    } catch (err) {
+      this.logger.warn(
+        `Photon geocode failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  private async geocodeViaNominatim(query: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      area: string;
+      city: string;
+      placeId: string | null;
+      category: string;
+      lng: number;
+      lat: number;
+      source: 'geocode';
+      formattedAddress: string;
+    }>
+  > {
+    try {
+      const url = new URL('https://nominatim.openstreetmap.org/search');
+      url.searchParams.set('q', `${query}, Addis Ababa, Ethiopia`);
+      url.searchParams.set('format', 'json');
+      url.searchParams.set('addressdetails', '1');
+      url.searchParams.set('limit', '8');
+      url.searchParams.set('countrycodes', 'et');
+      const res = await fetch(url.toString(), {
+        headers: {
+          'User-Agent':
+            'SabuEcommerce/1.0 (https://sabu.et; checkout delivery search)',
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        this.logger.warn(`Nominatim geocode HTTP ${res.status}`);
+        return [];
+      }
+      const data = (await res.json()) as Array<{
+        place_id: number;
+        display_name: string;
+        lat: string;
+        lon: string;
+        type?: string;
+        class?: string;
+        address?: Record<string, string>;
+      }>;
+      return data.map((d) => {
+        const addr = d.address ?? {};
+        const area =
+          addr.suburb ||
+          addr.neighbourhood ||
+          addr.city_district ||
+          addr.town ||
+          'Addis Ababa';
+        const name =
+          addr.amenity ||
+          addr.shop ||
+          addr.building ||
+          addr.road ||
+          d.display_name.split(',')[0] ||
+          query;
+        return {
+          id: `osm-${d.place_id}`,
+          name,
+          area,
+          city: addr.city || addr.state || 'Addis Ababa',
+          placeId: `nominatim:${d.place_id}`,
+          category: d.type || d.class || 'place',
+          lng: Number(d.lon),
+          lat: Number(d.lat),
+          source: 'geocode' as const,
+          formattedAddress: d.display_name,
+        };
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Nominatim geocode failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
+    }
   }
 
   async listLandmarks(opts?: { q?: string; city?: string }) {

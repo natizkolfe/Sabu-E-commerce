@@ -53,6 +53,7 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
   const [quickLandmarks, setQuickLandmarks] = useState<PlaceHit[]>([]);
   const [results, setResults] = useState<PlaceHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [mapReady, setMapReady] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
@@ -76,18 +77,36 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
     if (q.length < 2) {
       setResults([]);
       setSearching(false);
+      setSearchError(null);
       return;
     }
     let cancelled = false;
     setSearching(true);
+    setSearchError(null);
     const t = window.setTimeout(() => {
       fetch(`${API_URL}/delivery/places/search?q=${encodeURIComponent(q)}`)
-        .then((r) => r.json())
+        .then(async (r) => {
+          if (!r.ok) {
+            throw new Error(`Search unavailable (${r.status})`);
+          }
+          return r.json();
+        })
         .then((rows: PlaceHit[]) => {
-          if (!cancelled) setResults(Array.isArray(rows) ? rows : []);
+          if (cancelled) return;
+          setResults(Array.isArray(rows) ? rows : []);
+          if (Array.isArray(rows) && rows.length === 0) {
+            setSearchError(
+              "No matching places found. Try another landmark, or drop a pin on the map.",
+            );
+          }
         })
         .catch(() => {
-          if (!cancelled) setResults([]);
+          if (!cancelled) {
+            setResults([]);
+            setSearchError(
+              "Address search could not reach the server. Check API URL, or drop a pin manually.",
+            );
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -297,11 +316,17 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
       {searching && (
         <p className="text-xs text-sabu-moss">Searching locations…</p>
       )}
-      {query.trim().length >= 2 && !searching && listToShow.length === 0 && (
-        <p className="text-xs text-sabu-moss">
-          No matches found — drop a pin on the map and add instructions below.
-        </p>
+      {searchError && !searching && (
+        <p className="text-xs text-amber-800">{searchError}</p>
       )}
+      {query.trim().length >= 2 &&
+        !searching &&
+        !searchError &&
+        listToShow.length === 0 && (
+          <p className="text-xs text-sabu-moss">
+            No matches found — drop a pin on the map and add instructions below.
+          </p>
+        )}
       {query.trim().length < 2 && (
         <p className="text-xs text-sabu-moss">
           Popular landmarks (or type to search real places):
