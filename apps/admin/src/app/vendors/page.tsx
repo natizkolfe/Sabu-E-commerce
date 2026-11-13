@@ -60,7 +60,7 @@ export default function VendorsPage() {
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
-        <Link href="/" className="text-[#8aa897]">
+        <Link href="/?modules=1" className="text-[#8aa897]">
           ← Admin
         </Link>
       </main>
@@ -70,7 +70,7 @@ export default function VendorsPage() {
   return (
     <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6">
       <div className="mx-auto max-w-4xl">
-        <Link href="/" className="text-sm text-[#8aa897]">
+        <Link href="/?modules=1" className="text-sm text-[#8aa897]">
           ← Admin
         </Link>
         <h1 className="mt-2 text-3xl tracking-tight">Vendors</h1>

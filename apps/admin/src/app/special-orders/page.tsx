@@ -55,7 +55,7 @@ export default function SpecialOrdersPage() {
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
-        <Link href="/" className="text-[#8aa897]">
+        <Link href="/?modules=1" className="text-[#8aa897]">
           ← Admin
         </Link>
       </main>
@@ -65,7 +65,7 @@ export default function SpecialOrdersPage() {
   return (
     <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6">
       <div className="mx-auto max-w-5xl">
-        <Link href="/" className="text-sm text-[#8aa897]">
+        <Link href="/?modules=1" className="text-sm text-[#8aa897]">
           ← Admin
         </Link>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3">

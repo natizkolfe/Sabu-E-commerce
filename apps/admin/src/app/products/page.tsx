@@ -442,7 +442,7 @@ export default function ProductsAdminPage() {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
         <p>Sign in from the home page first.</p>
-        <Link href="/" className="mt-4 inline-block text-[#8aa897]">
+        <Link href="/?modules=1" className="mt-4 inline-block text-[#8aa897]">
           ← Admin home
         </Link>
       </main>
@@ -454,7 +454,7 @@ export default function ProductsAdminPage() {
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <Link href="/" className="text-sm text-[#8aa897]">
+            <Link href="/?modules=1" className="text-sm text-[#8aa897]">
               ← Admin
             </Link>
             <h1 className="mt-2 text-3xl tracking-tight">Products & prices</h1>

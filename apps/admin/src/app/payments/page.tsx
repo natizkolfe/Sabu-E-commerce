@@ -131,7 +131,7 @@ export default function PaymentsAdminPage() {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
         <p>Sign in from the home page first.</p>
-        <Link href="/" className="mt-4 inline-block text-[#8aa897]">
+        <Link href="/?modules=1" className="mt-4 inline-block text-[#8aa897]">
           ← Admin home
         </Link>
       </main>
@@ -142,7 +142,7 @@ export default function PaymentsAdminPage() {
     <main className="min-h-screen bg-[#0f1412] px-6 py-12 text-[#eef2ef]">
       <div className="mx-auto max-w-4xl space-y-10">
         <div>
-          <Link href="/" className="text-sm text-[#8aa897]">
+          <Link href="/?modules=1" className="text-sm text-[#8aa897]">
             ← Admin
           </Link>
           <h1 className="mt-4 text-3xl">Payment verification</h1>
