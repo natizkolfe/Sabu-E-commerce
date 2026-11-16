@@ -24,3 +24,26 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Dark form controls — avoid bright white number spinners / date pickers */
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+/* Number steppers: arrows only, no white vertical chrome */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  margin: 0;
+  opacity: 0.75;
+  background: transparent;
+  filter: brightness(1.4);
+}
+
+input[type="number"]:hover::-webkit-outer-spin-button,
+input[type="number"]:hover::-webkit-inner-spin-button,
+input[type="number"]:focus::-webkit-outer-spin-button,
+input[type="number"]:focus::-webkit-inner-spin-button {
+  opacity: 1;
+}
