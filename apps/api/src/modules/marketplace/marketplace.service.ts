@@ -330,6 +330,7 @@ export class MarketplaceService {
         orderNumber: string;
         productSummary: string | null;
         grossAmount: number;
+        ratePct: number;
         commissionAmount: number;
         netPayable: number;
       }>
@@ -341,10 +342,11 @@ export class MarketplaceService {
         order_number: string;
         product_summary: string | null;
         gross_amount: string;
+        rate_pct: string;
         commission_amount: string;
       }>(
         `SELECT si.settlement_id, c.id AS entry_id, o.order_number,
-                c.gross_amount::text, c.commission_amount::text,
+                c.gross_amount::text, c.rate_pct::text, c.commission_amount::text,
                 (
                   SELECT string_agg(oi.name_snapshot || ' ×' || oi.quantity::text, ', ' ORDER BY oi.line_no)
                   FROM sales.order_items oi
@@ -366,6 +368,7 @@ export class MarketplaceService {
           orderNumber: it.order_number,
           productSummary: it.product_summary,
           grossAmount: gross,
+          ratePct: Number(it.rate_pct),
           commissionAmount: fee,
           netPayable: Math.round((gross - fee) * 100) / 100,
         });

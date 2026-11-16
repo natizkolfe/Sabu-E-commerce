@@ -1549,6 +1549,7 @@ export const adminApi = {
           orderNumber: string;
           productSummary: string | null;
           grossAmount: number;
+          ratePct: number;
           commissionAmount: number;
           netPayable: number;
         }>;

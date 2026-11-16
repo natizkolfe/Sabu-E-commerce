@@ -41,6 +41,49 @@ function payoutBadge(state: "unpaid" | "settlement_pending" | "paid") {
   );
 }
 
+type Settlement = Awaited<
+  ReturnType<typeof adminApi.listSettlements>
+>[number];
+
+/** Plain-text vendor receipt for WhatsApp / SMS / email paste. */
+function formatVendorReceipt(s: Settlement): string {
+  const lines: string[] = [
+    "Sabu Online Shopping — Vendor settlement receipt",
+    "==============================================",
+    `Settlement: ${s.settlementNumber}`,
+    `Vendor: ${s.vendorName}`,
+    `Period: ${s.periodStart} → ${s.periodEnd}`,
+    `Status: ${s.status === "paid" ? "Paid" : formatLabel(s.status)}`,
+  ];
+  if (s.paidAt) {
+    lines.push(`Paid date: ${new Date(s.paidAt).toLocaleDateString()}`);
+  }
+  if (s.payoutReference) {
+    lines.push(`Payout reference: ${s.payoutReference}`);
+  }
+  lines.push("", "Items", "-----");
+  for (const it of s.items) {
+    lines.push(
+      `• ${it.orderNumber} — ${it.productSummary ?? "Merchandise"}`,
+      `  Sale total: ${it.grossAmount.toFixed(2)} ETB`,
+      `  Sabu fee: ${it.ratePct}% = ${it.commissionAmount.toFixed(2)} ETB`,
+      `  Vendor net: ${it.netPayable.toFixed(2)} ETB`,
+      "",
+    );
+  }
+  lines.push(
+    "Totals",
+    "------",
+    `Gross sales: ${s.grossSales.toFixed(2)} ETB`,
+    `Sabu commission: ${s.commissionTotal.toFixed(2)} ETB`,
+    `Amount paid to vendor: ${s.netPayable.toFixed(2)} ETB`,
+    "",
+    "Delivery fees stay with Sabu and are not included in vendor payouts.",
+    "Thank you for selling with Sabu.",
+  );
+  return lines.join("\n");
+}
+
 export default function CommissionsPage() {
   const [token, setToken] = useState<string | null>(null);
   const [rule, setRule] = useState<{ ratePct: number; code: string } | null>(
@@ -60,6 +103,7 @@ export default function CommissionsPage() {
   const [confirmSettlementId, setConfirmSettlementId] = useState<string | null>(
     null,
   );
+  const [vendorReceiptId, setVendorReceiptId] = useState<string | null>(null);
   const [paidAt, setPaidAt] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
@@ -252,6 +296,20 @@ export default function CommissionsPage() {
     );
   }
 
+  async function copyVendorReceipt(s: Settlement) {
+    const text = formatVendorReceipt(s);
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(`Vendor receipt for ${s.settlementNumber} copied — paste to WhatsApp or SMS.`);
+    } catch {
+      setError("Could not copy receipt. Open Vendor receipt and copy manually.");
+    }
+  }
+
+  function printVendorReceipt() {
+    window.print();
+  }
+
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f1412] px-6 py-16 text-[#eef2ef]">
@@ -263,10 +321,11 @@ export default function CommissionsPage() {
   }
 
   const confirming = settlements.find((s) => s.id === confirmSettlementId);
+  const vendorReceipt = settlements.find((s) => s.id === vendorReceiptId);
 
   return (
-    <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6">
-      <div className="mx-auto max-w-5xl space-y-10">
+    <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6 print:bg-white print:px-0 print:py-0 print:text-black">
+      <div className="mx-auto max-w-5xl space-y-10 print:hidden">
         <div>
           <Link href="/?modules=1" className="text-sm text-[#8aa897]">
             ← Admin
@@ -517,26 +576,42 @@ export default function CommissionsPage() {
                       {s.payoutReference ? ` · Ref ${s.payoutReference}` : ""}
                     </p>
                   </div>
-                  {s.status !== "paid" && s.status !== "cancelled" && (
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={() => openConfirm(s.id)}
-                      className="bg-[#2f6b4f] px-3 py-1.5 text-xs"
+                      onClick={() => setVendorReceiptId(s.id)}
+                      className="border border-[#24302a] px-3 py-1.5 text-xs"
                     >
-                      Confirm paid to vendor
+                      Vendor receipt
                     </button>
-                  )}
-                  {s.payoutReceiptUrl && (
-                    <a
-                      href={`${API_URL}${s.payoutReceiptUrl}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-[#9dcdb4] underline"
+                    <button
+                      type="button"
+                      onClick={() => void copyVendorReceipt(s)}
+                      className="border border-[#24302a] px-3 py-1.5 text-xs"
                     >
-                      View receipt
-                    </a>
-                  )}
+                      Copy for vendor
+                    </button>
+                    {s.status !== "paid" && s.status !== "cancelled" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => openConfirm(s.id)}
+                        className="bg-[#2f6b4f] px-3 py-1.5 text-xs"
+                      >
+                        Confirm paid to vendor
+                      </button>
+                    )}
+                    {s.payoutReceiptUrl && (
+                      <a
+                        href={`${API_URL}${s.payoutReceiptUrl}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 text-xs text-[#9dcdb4] underline"
+                      >
+                        Payment proof
+                      </a>
+                    )}
+                  </div>
                 </div>
                 {s.items.length > 0 && (
                   <ul className="space-y-1 border border-[#24302a] bg-[#121916] px-3 py-2 text-xs text-[#9eb0a6]">
@@ -548,6 +623,8 @@ export default function CommissionsPage() {
                         <span>
                           {it.orderNumber} ·{" "}
                           {it.productSummary ?? "Merchandise"}
+                          {" · "}
+                          Sabu {it.ratePct}% of {it.grossAmount.toFixed(2)}
                         </span>
                         <span className="text-[#9dcdb4]">
                           {it.netPayable.toFixed(2)} ETB
@@ -637,6 +714,101 @@ export default function CommissionsPage() {
           </div>
         )}
       </div>
+
+      {vendorReceipt && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center print:static print:bg-transparent print:p-0">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto border border-[#24302a] bg-[#121916] p-5 print:max-h-none print:max-w-none print:overflow-visible print:border-0 print:bg-white print:p-8 print:text-black">
+            <div className="flex items-start justify-between gap-3 print:hidden">
+              <h3 className="text-lg">Vendor receipt</h3>
+              <button
+                type="button"
+                onClick={() => setVendorReceiptId(null)}
+                className="text-sm text-[#8aa897]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-4 text-sm print:mt-0">
+              <div>
+                <p className="text-xs tracking-[0.2em] text-[#8aa897] uppercase print:text-gray-500">
+                  Sabu Online Shopping
+                </p>
+                <p className="mt-1 text-xl font-medium">
+                  Settlement {vendorReceipt.settlementNumber}
+                </p>
+                <p className="text-[#9eb0a6] print:text-gray-600">
+                  Vendor: {vendorReceipt.vendorName}
+                </p>
+                <p className="text-xs text-[#8aa897] print:text-gray-500">
+                  Period {vendorReceipt.periodStart} →{" "}
+                  {vendorReceipt.periodEnd}
+                  {vendorReceipt.paidAt
+                    ? ` · Paid ${new Date(vendorReceipt.paidAt).toLocaleDateString()}`
+                    : ` · ${formatLabel(vendorReceipt.status)}`}
+                  {vendorReceipt.payoutReference
+                    ? ` · Ref ${vendorReceipt.payoutReference}`
+                    : ""}
+                </p>
+              </div>
+              <ul className="divide-y divide-[#24302a] border-y border-[#24302a] print:divide-gray-200 print:border-gray-200">
+                {vendorReceipt.items.map((it) => (
+                  <li key={it.entryId} className="space-y-1 py-3">
+                    <p className="font-medium">
+                      {it.orderNumber} · {it.productSummary ?? "Merchandise"}
+                    </p>
+                    <p className="text-xs text-[#9eb0a6] print:text-gray-600">
+                      Sale {it.grossAmount.toFixed(2)} ETB · Sabu fee{" "}
+                      {it.ratePct}% = {it.commissionAmount.toFixed(2)} ETB
+                    </p>
+                    <p className="text-[#9dcdb4] print:text-black">
+                      Vendor net {it.netPayable.toFixed(2)} ETB
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <div className="space-y-1 text-sm">
+                <p className="flex justify-between gap-4">
+                  <span className="text-[#8aa897] print:text-gray-600">
+                    Gross sales
+                  </span>
+                  <span>{vendorReceipt.grossSales.toFixed(2)} ETB</span>
+                </p>
+                <p className="flex justify-between gap-4">
+                  <span className="text-[#8aa897] print:text-gray-600">
+                    Sabu commission
+                  </span>
+                  <span>{vendorReceipt.commissionTotal.toFixed(2)} ETB</span>
+                </p>
+                <p className="flex justify-between gap-4 text-base font-medium">
+                  <span>Paid to vendor</span>
+                  <span className="text-[#9dcdb4] print:text-black">
+                    {vendorReceipt.netPayable.toFixed(2)} ETB
+                  </span>
+                </p>
+                <p className="pt-2 text-xs text-[#8aa897] print:text-gray-500">
+                  Delivery fees stay with Sabu and are not included.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2 print:hidden">
+              <button
+                type="button"
+                onClick={() => void copyVendorReceipt(vendorReceipt)}
+                className="bg-[#2f6b4f] px-3 py-2 text-sm"
+              >
+                Copy text for vendor
+              </button>
+              <button
+                type="button"
+                onClick={printVendorReceipt}
+                className="border border-[#24302a] px-3 py-2 text-sm"
+              >
+                Print / PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
