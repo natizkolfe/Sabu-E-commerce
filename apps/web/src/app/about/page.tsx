@@ -3,6 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import {
+  FacebookIcon,
+  InstagramIcon,
+  PhoneIcon,
+  TikTokIcon,
+  WhatsAppIcon,
+} from "../../components/social-icons";
 
 type AboutContent = Awaited<ReturnType<typeof api.getAboutContent>>;
 
@@ -58,44 +65,53 @@ export default function AboutPage() {
               Contact us
             </h2>
             <p className="mt-2 text-sm text-sabu-moss">{content.contactNote}</p>
-            <div className="mt-6 flex flex-wrap gap-3">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
               <a
                 href={`tel:${content.phone.replace(/\s/g, "")}`}
-                className="bg-sabu-forest px-4 py-2.5 text-sm text-sabu-cream transition hover:bg-sabu-leaf"
+                className="inline-flex items-center gap-2 bg-sabu-forest px-4 py-2.5 text-sm text-sabu-cream transition hover:bg-sabu-leaf"
               >
-                Call {content.phone}
+                <PhoneIcon className="h-4 w-4" />
+                {content.phone}
               </a>
               <a
                 href={content.whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="border border-sabu-mist px-4 py-2.5 text-sm transition hover:border-sabu-leaf"
+                aria-label="WhatsApp"
+                title="WhatsApp"
+                className="inline-flex h-11 w-11 items-center justify-center border border-sabu-mist text-[#25D366] transition hover:border-[#25D366] hover:bg-[#25D366]/10"
               >
-                WhatsApp
+                <WhatsAppIcon />
               </a>
               <a
                 href={content.instagramUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="border border-sabu-mist px-4 py-2.5 text-sm transition hover:border-sabu-leaf"
+                aria-label="Instagram"
+                title="Instagram"
+                className="inline-flex h-11 w-11 items-center justify-center border border-sabu-mist text-[#E1306C] transition hover:border-[#E1306C] hover:bg-[#E1306C]/10"
               >
-                Instagram
+                <InstagramIcon />
               </a>
               <a
                 href={content.tiktokUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="border border-sabu-mist px-4 py-2.5 text-sm transition hover:border-sabu-leaf"
+                aria-label="TikTok"
+                title="TikTok"
+                className="inline-flex h-11 w-11 items-center justify-center border border-sabu-mist text-sabu-ink transition hover:border-sabu-ink hover:bg-sabu-ink/5"
               >
-                TikTok
+                <TikTokIcon />
               </a>
               <a
                 href={content.facebookUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="border border-sabu-mist px-4 py-2.5 text-sm transition hover:border-sabu-leaf"
+                aria-label="Facebook"
+                title="Facebook"
+                className="inline-flex h-11 w-11 items-center justify-center border border-sabu-mist text-[#1877F2] transition hover:border-[#1877F2] hover:bg-[#1877F2]/10"
               >
-                Facebook
+                <FacebookIcon />
               </a>
             </div>
           </div>

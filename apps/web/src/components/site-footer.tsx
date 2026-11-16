@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import {
+  FacebookIcon,
+  InstagramIcon,
+  TikTokIcon,
+  WhatsAppIcon,
+} from "./social-icons";
 
 const DEFAULT_PHONE = "+251911129726";
 const DEFAULT_WA = "https://wa.me/251911129726";
@@ -65,38 +71,46 @@ export function SiteFooter() {
               Sign in
             </Link>
           </div>
-          <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-sabu-mist">
+          <div className="flex flex-wrap items-center gap-3 text-sabu-mist">
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-white"
+              aria-label="WhatsApp"
+              title="WhatsApp"
+              className="inline-flex h-9 w-9 items-center justify-center transition hover:text-white"
             >
-              WhatsApp
+              <WhatsAppIcon className="h-5 w-5" />
             </a>
             <a
               href={instagramUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-white"
+              aria-label="Instagram"
+              title="Instagram"
+              className="inline-flex h-9 w-9 items-center justify-center transition hover:text-white"
             >
-              Instagram
+              <InstagramIcon className="h-5 w-5" />
             </a>
             <a
               href={tiktokUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-white"
+              aria-label="TikTok"
+              title="TikTok"
+              className="inline-flex h-9 w-9 items-center justify-center transition hover:text-white"
             >
-              TikTok
+              <TikTokIcon className="h-5 w-5" />
             </a>
             <a
               href={facebookUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-white"
+              aria-label="Facebook"
+              title="Facebook"
+              className="inline-flex h-9 w-9 items-center justify-center transition hover:text-white"
             >
-              Facebook
+              <FacebookIcon className="h-5 w-5" />
             </a>
           </div>
           <p className="text-xs text-sabu-mist/80">

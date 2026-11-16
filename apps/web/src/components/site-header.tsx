@@ -52,7 +52,8 @@ export function SiteHeader() {
   const searchParams = useSearchParams();
   const { user, ready } = useAuth();
   const { itemCount } = useCart();
-  const onHero = pathname === "/";
+  // Dark top band pages need light nav text (home hero + About Sabu)
+  const onHero = pathname === "/" || pathname.startsWith("/about");
   const [topCats, setTopCats] = useState<Cat[]>([]);
   const [open, setOpen] = useState(false);
   const [hash, setHash] = useState("");
