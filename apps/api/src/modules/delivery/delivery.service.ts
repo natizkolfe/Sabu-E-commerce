@@ -659,10 +659,12 @@ export class DeliveryService {
       employment_type: string;
       zone_name: string | null;
       license_expiry: Date;
+      vehicle_type: string | null;
       active_deliveries: string;
     }>(
       `SELECT dr.id, dr.driver_code, u.full_name, u.phone_e164, dr.availability,
               dr.status, dr.employment_type, z.name AS zone_name, dr.license_expiry,
+              dr.vehicle_type,
               (
                 SELECT count(*)::text FROM delivery.driver_assignments a
                 WHERE a.driver_id = dr.id AND a.status IN ('offered','accepted')
@@ -683,6 +685,7 @@ export class DeliveryService {
       employmentType: r.employment_type,
       zoneName: r.zone_name,
       licenseExpiry: r.license_expiry,
+      vehicleType: r.vehicle_type,
       activeDeliveries: Number(r.active_deliveries),
     }));
   }
@@ -707,9 +710,16 @@ export class DeliveryService {
       licenseNumber: string;
       licenseExpiry: string;
       availability?: 'offline' | 'available' | 'on_break';
+      vehicleType?: 'motorcycle' | 'car';
       activate?: boolean;
     },
   ) {
+    if (
+      input.vehicleType &&
+      !['motorcycle', 'car'].includes(input.vehicleType)
+    ) {
+      throw new BadRequestException('Vehicle type must be motorcycle or car');
+    }
     if (!/^\+[1-9][0-9]{7,14}$/.test(input.phone)) {
       throw new BadRequestException('Phone must be E.164 (+251...)');
     }
@@ -782,9 +792,9 @@ export class DeliveryService {
         `INSERT INTO delivery.drivers (
            user_id, driver_code, employment_type, home_zone_id, region_id,
            license_number_enc, license_number_hash, license_expiry,
-           status, availability, verified_by, verified_at
+           status, availability, vehicle_type, verified_by, verified_at
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
          ) RETURNING id`,
         [
           userId,
@@ -797,6 +807,7 @@ export class DeliveryService {
           input.licenseExpiry,
           activate ? 'active' : 'pending_verification',
           input.availability ?? 'available',
+          input.vehicleType ?? 'motorcycle',
           activate ? actor.id : null,
           activate ? new Date().toISOString() : null,
         ],
@@ -840,13 +851,21 @@ export class DeliveryService {
       availability?: 'offline' | 'available' | 'on_delivery' | 'on_break';
       status?: 'pending_verification' | 'active' | 'suspended' | 'terminated';
       homeZoneId?: string | null;
+      vehicleType?: 'motorcycle' | 'car';
     },
   ) {
+    if (
+      input.vehicleType &&
+      !['motorcycle', 'car'].includes(input.vehicleType)
+    ) {
+      throw new BadRequestException('Vehicle type must be motorcycle or car');
+    }
     const { rowCount } = await this.db.query(
       `UPDATE delivery.drivers SET
          availability = COALESCE($2, availability),
          status = COALESCE($3, status),
          home_zone_id = COALESCE($4, home_zone_id),
+         vehicle_type = COALESCE($5, vehicle_type),
          updated_at = now()
        WHERE id = $1`,
       [
@@ -854,6 +873,7 @@ export class DeliveryService {
         input.availability ?? null,
         input.status ?? null,
         input.homeZoneId === undefined ? null : input.homeZoneId,
+        input.vehicleType ?? null,
       ],
     );
     if (!rowCount) throw new NotFoundException('Driver not found');

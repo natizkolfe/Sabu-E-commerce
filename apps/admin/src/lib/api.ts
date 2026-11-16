@@ -1156,6 +1156,7 @@ export const adminApi = {
         employmentType?: string;
         zoneName: string | null;
         licenseExpiry?: string;
+        vehicleType?: "motorcycle" | "car" | null;
         activeDeliveries: number;
       }>
     >(`/delivery/admin/drivers${all ? "?all=1" : ""}`, { token });
@@ -1178,6 +1179,7 @@ export const adminApi = {
       employmentType?: "employee" | "contractor";
       homeZoneId?: string;
       availability?: "offline" | "available" | "on_break";
+      vehicleType?: "motorcycle" | "car";
       activate?: boolean;
     },
   ) {
@@ -1200,6 +1202,7 @@ export const adminApi = {
       availability?: string;
       status?: string;
       homeZoneId?: string;
+      vehicleType?: "motorcycle" | "car";
     },
   ) {
     return request(`/delivery/admin/drivers/${id}`, {
@@ -1475,7 +1478,10 @@ export const adminApi = {
     id: string,
     body: {
       status?: string;
+      businessName?: string;
       displayName?: string;
+      phone?: string | null;
+      email?: string | null;
       commissionRatePct?: number | null;
       notes?: string;
     },

@@ -57,7 +57,10 @@ export class MarketplaceController {
     @Body()
     body: {
       status?: string;
+      businessName?: string;
       displayName?: string;
+      phone?: string | null;
+      email?: string | null;
       commissionRatePct?: number | null;
       notes?: string;
     },

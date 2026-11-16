@@ -143,7 +143,10 @@ export class MarketplaceService {
     id: string,
     body: {
       status?: string;
+      businessName?: string;
       displayName?: string;
+      phone?: string | null;
+      email?: string | null;
       commissionRatePct?: number | null;
       notes?: string;
     },
@@ -152,22 +155,47 @@ export class MarketplaceService {
     if (body.status && !allowed.includes(body.status)) {
       throw new BadRequestException('Invalid status');
     }
+    if (body.businessName !== undefined && !body.businessName.trim()) {
+      throw new BadRequestException('Business name cannot be empty');
+    }
+    if (body.displayName !== undefined && !body.displayName.trim()) {
+      throw new BadRequestException('Display name cannot be empty');
+    }
+    if (body.phone != null && body.phone !== '' && !/^\+[1-9][0-9]{7,14}$/.test(body.phone)) {
+      throw new BadRequestException('Phone must be E.164 (+251...)');
+    }
     const { rowCount } = await this.db.query(
       `UPDATE marketplace.vendors SET
          status = COALESCE($2, status),
-         display_name = COALESCE($3, display_name),
+         business_name = COALESCE($3, business_name),
+         display_name = COALESCE($4, display_name),
+         phone_e164 = CASE
+           WHEN $5::boolean THEN $6
+           ELSE phone_e164
+         END,
+         email = CASE
+           WHEN $7::boolean THEN $8
+           ELSE email
+         END,
          commission_rate_pct = CASE
-           WHEN $4::text = '__CLEAR__' THEN NULL
-           WHEN $5::numeric IS NOT NULL THEN $5::numeric
+           WHEN $9::text = '__CLEAR__' THEN NULL
+           WHEN $10::numeric IS NOT NULL THEN $10::numeric
            ELSE commission_rate_pct
          END,
-         notes = COALESCE($6, notes),
+         notes = COALESCE($11, notes),
          updated_at = now()
        WHERE id = $1`,
       [
         id,
         body.status ?? null,
-        body.displayName ?? null,
+        body.businessName?.trim() ?? null,
+        body.displayName?.trim() ??
+          body.businessName?.trim() ??
+          null,
+        body.phone !== undefined,
+        body.phone?.trim() || null,
+        body.email !== undefined,
+        body.email?.trim() || null,
         body.commissionRatePct === null ? '__CLEAR__' : null,
         body.commissionRatePct ?? null,
         body.notes ?? null,

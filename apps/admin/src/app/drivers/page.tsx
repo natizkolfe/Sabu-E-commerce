@@ -24,6 +24,9 @@ export default function DriversAdminPage() {
   const [availability, setAvailability] = useState<
     "available" | "offline" | "on_break"
   >("available");
+  const [vehicleType, setVehicleType] = useState<"motorcycle" | "car">(
+    "motorcycle",
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,12 +67,14 @@ export default function DriversAdminPage() {
         employmentType,
         homeZoneId: zoneId || undefined,
         availability,
+        vehicleType,
         activate: true,
       });
       setMessage(`Added ${created.code} — ${created.name}`);
       setFullName("");
       setPhone("+2519");
       setLicenseNumber("");
+      setVehicleType("motorcycle");
       await refresh(token);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Create failed");
@@ -94,6 +99,19 @@ export default function DriversAdminPage() {
     try {
       await adminApi.updateDriver(token, id, { availability });
       await refresh(token);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Update failed");
+    }
+  }
+
+  async function setVehicle(id: string, next: "motorcycle" | "car") {
+    if (!token) return;
+    try {
+      await adminApi.updateDriver(token, id, { vehicleType: next });
+      await refresh(token);
+      setMessage(
+        next === "car" ? "Vehicle set to car" : "Vehicle set to motorcycle",
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Update failed");
     }
@@ -200,6 +218,16 @@ export default function DriversAdminPage() {
               <option value="on_break">On break</option>
               <option value="offline">Offline</option>
             </select>
+            <select
+              value={vehicleType}
+              onChange={(e) =>
+                setVehicleType(e.target.value as "motorcycle" | "car")
+              }
+              className="w-full bg-[#17201c] px-3 py-2 text-sm"
+            >
+              <option value="motorcycle">Motorcycle</option>
+              <option value="car">Car</option>
+            </select>
             <button
               type="submit"
               disabled={busy}
@@ -225,8 +253,13 @@ export default function DriversAdminPage() {
                         <span className="text-xs text-[#8aa897]">{d.code}</span>
                       </p>
                       <p className="text-xs text-[#9eb0a6]">
-                        {d.phone} · {d.zoneName ?? "no zone"} · load{" "}
-                        {d.activeDeliveries}
+                        {d.phone} · {d.zoneName ?? "no zone"} ·{" "}
+                        {d.vehicleType === "car"
+                          ? "Car"
+                          : d.vehicleType === "motorcycle"
+                            ? "Motorcycle"
+                            : "No vehicle set"}{" "}
+                        · load {d.activeDeliveries}
                       </p>
                       <p className="mt-1 text-[11px] text-[#8aa897]">
                         {formatLabel(d.status)} · {formatLabel(d.availability)} ·{" "}
@@ -234,6 +267,28 @@ export default function DriversAdminPage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setVehicle(d.id, "motorcycle")}
+                        className={
+                          d.vehicleType === "motorcycle"
+                            ? "bg-[#2f6b4f] px-2 py-1 text-[11px]"
+                            : "border border-[#24302a] px-2 py-1 text-[11px]"
+                        }
+                      >
+                        Motorcycle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVehicle(d.id, "car")}
+                        className={
+                          d.vehicleType === "car"
+                            ? "bg-[#2f6b4f] px-2 py-1 text-[11px]"
+                            : "border border-[#24302a] px-2 py-1 text-[11px]"
+                        }
+                      >
+                        Car
+                      </button>
                       <button
                         type="button"
                         onClick={() => setAvail(d.id, "available")}

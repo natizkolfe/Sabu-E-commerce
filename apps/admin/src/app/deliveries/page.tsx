@@ -67,7 +67,23 @@ export default function DeliveriesAdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<
+    "details" | "maps" | "phone" | "portal" | null
+  >(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoOpenRef = useRef<string | null>(null);
+
+  function flashCopied(key: "details" | "maps" | "phone" | "portal") {
+    setCopiedKey(key);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopiedKey(null), 1800);
+  }
+
+  function copyBtnClass(key: "details" | "maps" | "phone" | "portal") {
+    return copiedKey === key
+      ? "bg-[#2f6b4f] px-3 py-2 text-xs"
+      : "border border-[#24302a] px-3 py-2 text-xs";
+  }
 
   const selectedDriver = useMemo(
     () => drivers.find((d) => d.id === driverId) ?? null,
@@ -116,6 +132,7 @@ export default function DeliveriesAdminPage() {
       }
       const d = await adminApi.getDelivery(token, id!);
       setDetail(d);
+      setCopiedKey(null);
       setSelectedOrderId(orderId);
       if (d.assignedDriver?.id) {
         setDriverId(d.assignedDriver.id);
@@ -195,6 +212,7 @@ export default function DeliveriesAdminPage() {
     if (!detail) return;
     const ok = await copyText(formatDeliverySummary(detail));
     setMessage(ok ? "Delivery details copied to clipboard" : "Copy failed");
+    if (ok) flashCopied("details");
   }
 
   async function onCopyMaps() {
@@ -204,6 +222,7 @@ export default function DeliveriesAdminPage() {
     }
     const ok = await copyText(detail.googleMapsUrl);
     setMessage(ok ? "Google Maps link copied" : "Copy failed");
+    if (ok) flashCopied("maps");
   }
 
   async function onCopyPhone() {
@@ -213,6 +232,7 @@ export default function DeliveriesAdminPage() {
     }
     const ok = await copyText(detail.recipientPhone);
     setMessage(ok ? "Customer phone copied" : "Copy failed");
+    if (ok) flashCopied("phone");
   }
 
   async function onCopyPortal() {
@@ -222,6 +242,7 @@ export default function DeliveriesAdminPage() {
     }
     const ok = await copyText(portalUrl);
     setMessage(ok ? "Driver verification portal link copied" : "Copy failed");
+    if (ok) flashCopied("portal");
   }
 
   if (!token) {
@@ -400,31 +421,39 @@ export default function DeliveriesAdminPage() {
                     <button
                       type="button"
                       onClick={onCopyDetails}
-                      className="bg-[#2f6b4f] px-3 py-2 text-xs"
+                      className={copyBtnClass("details")}
                     >
-                      Copy Delivery Details
+                      {copiedKey === "details"
+                        ? "Copied details"
+                        : "Copy Delivery Details"}
                     </button>
                     <button
                       type="button"
                       onClick={onCopyMaps}
-                      className="border border-[#24302a] px-3 py-2 text-xs"
+                      className={copyBtnClass("maps")}
                     >
-                      Copy Google Maps Link
+                      {copiedKey === "maps"
+                        ? "Copied maps link"
+                        : "Copy Google Maps Link"}
                     </button>
                     <button
                       type="button"
                       onClick={onCopyPhone}
-                      className="border border-[#24302a] px-3 py-2 text-xs"
+                      className={copyBtnClass("phone")}
                     >
-                      Copy Customer Phone Number
+                      {copiedKey === "phone"
+                        ? "Copied phone"
+                        : "Copy Customer Phone Number"}
                     </button>
                     {portalUrl && (
                       <button
                         type="button"
                         onClick={onCopyPortal}
-                        className="border border-[#24302a] px-3 py-2 text-xs"
+                        className={copyBtnClass("portal")}
                       >
-                        Copy Driver Portal Link
+                        {copiedKey === "portal"
+                          ? "Copied portal link"
+                          : "Copy Driver Portal Link"}
                       </button>
                     )}
                   </div>
@@ -453,8 +482,13 @@ export default function DeliveriesAdminPage() {
                     {drivers.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name} · {d.phone || "no phone"} ·{" "}
-                        {d.zoneName || "no zone"} · {d.availability} · load{" "}
-                        {d.activeDeliveries}
+                        {d.zoneName || "no zone"} ·{" "}
+                        {d.vehicleType === "car"
+                          ? "car"
+                          : d.vehicleType === "motorcycle"
+                            ? "motorcycle"
+                            : "vehicle?"}{" "}
+                        · {d.availability} · load {d.activeDeliveries}
                       </option>
                     ))}
                   </select>

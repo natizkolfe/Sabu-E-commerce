@@ -181,6 +181,10 @@ class CreateDriverDto {
   availability?: 'offline' | 'available' | 'on_break';
 
   @IsOptional()
+  @IsIn(['motorcycle', 'car'])
+  vehicleType?: 'motorcycle' | 'car';
+
+  @IsOptional()
   @IsBoolean()
   activate?: boolean;
 }
@@ -197,6 +201,10 @@ class UpdateDriverDto {
   @IsOptional()
   @IsUUID()
   homeZoneId?: string;
+
+  @IsOptional()
+  @IsIn(['motorcycle', 'car'])
+  vehicleType?: 'motorcycle' | 'car';
 }
 
 @Controller('delivery')
