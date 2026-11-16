@@ -306,8 +306,153 @@ export default function CommissionsPage() {
     }
   }
 
-  function printVendorReceipt() {
-    window.print();
+  /** Opens a clean print window (title + no admin URL in PDF headers). */
+  function printVendorReceipt(s: Settlement) {
+    const itemsHtml = s.items
+      .map(
+        (it) => `
+      <div class="item">
+        <p class="item-title">${escapeHtml(it.orderNumber)} · ${escapeHtml(it.productSummary ?? "Merchandise")}</p>
+        <p class="muted">Sale ${it.grossAmount.toFixed(2)} ETB · Sabu fee ${it.ratePct}% = ${it.commissionAmount.toFixed(2)} ETB</p>
+        <p class="net">Vendor net ${it.netPayable.toFixed(2)} ETB</p>
+      </div>`,
+      )
+      .join("");
+
+    const paidLine = s.paidAt
+      ? ` · Paid ${new Date(s.paidAt).toLocaleDateString()}`
+      : ` · ${formatLabel(s.status)}`;
+    const refLine = s.payoutReference
+      ? ` · Ref ${escapeHtml(s.payoutReference)}`
+      : "";
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sabu Online Shopping</title>
+  <style>
+    @page { margin: 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: #111;
+      background: #fff;
+    }
+    .sheet {
+      position: relative;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 28px 8px;
+      overflow: hidden;
+    }
+    .watermark {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 0;
+      transform: rotate(-28deg);
+      user-select: none;
+    }
+    .watermark .line1 {
+      font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 42px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(15, 61, 40, 0.10);
+      line-height: 1.1;
+    }
+    .watermark .line2 {
+      margin-top: 10px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 22px;
+      font-style: italic;
+      color: rgba(15, 61, 40, 0.12);
+    }
+    .content { position: relative; z-index: 1; }
+    .brand {
+      font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #666;
+    }
+    h1 {
+      margin: 8px 0 0;
+      font-size: 28px;
+      font-weight: 700;
+      font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    .meta { margin-top: 6px; color: #555; font-size: 14px; }
+    .period { margin-top: 4px; color: #777; font-size: 12px; }
+    .item {
+      border-top: 1px solid #ddd;
+      padding: 14px 0;
+    }
+    .item:last-of-type { border-bottom: 1px solid #ddd; }
+    .item-title { margin: 0; font-weight: 600; font-size: 15px; }
+    .muted { margin: 4px 0 0; color: #666; font-size: 12px; }
+    .net { margin: 4px 0 0; font-weight: 600; }
+    .totals { margin-top: 18px; font-size: 14px; }
+    .row { display: flex; justify-content: space-between; gap: 16px; margin: 4px 0; }
+    .row.strong { margin-top: 10px; font-size: 16px; font-weight: 700; }
+    .note { margin-top: 14px; color: #777; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="watermark" aria-hidden="true">
+      <div class="line1">Vendor Receipt</div>
+      <div class="line2">Sabu Online Shopping</div>
+    </div>
+    <div class="content">
+      <p class="brand">Sabu Online Shopping</p>
+      <h1>Settlement ${escapeHtml(s.settlementNumber)}</h1>
+      <p class="meta">Vendor: ${escapeHtml(s.vendorName)}</p>
+      <p class="period">Period ${escapeHtml(s.periodStart)} → ${escapeHtml(s.periodEnd)}${paidLine}${refLine}</p>
+      ${itemsHtml}
+      <div class="totals">
+        <div class="row"><span>Gross sales</span><span>${s.grossSales.toFixed(2)} ETB</span></div>
+        <div class="row"><span>Sabu commission</span><span>${s.commissionTotal.toFixed(2)} ETB</span></div>
+        <div class="row strong"><span>Paid to vendor</span><span>${s.netPayable.toFixed(2)} ETB</span></div>
+        <p class="note">Delivery fees stay with Sabu and are not included.</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    window.onload = function () {
+      document.title = "Sabu Online Shopping";
+      setTimeout(function () {
+        window.focus();
+        window.print();
+      }, 150);
+    };
+  </script>
+</body>
+</html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) {
+      setError("Allow pop-ups to print the vendor receipt PDF.");
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  }
+
+  function escapeHtml(value: string) {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   if (!token) {
@@ -716,95 +861,104 @@ export default function CommissionsPage() {
       </div>
 
       {vendorReceipt && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center print:static print:bg-transparent print:p-0">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto border border-[#24302a] bg-[#121916] p-5 print:max-h-none print:max-w-none print:overflow-visible print:border-0 print:bg-white print:p-8 print:text-black">
-            <div className="flex items-start justify-between gap-3 print:hidden">
-              <h3 className="text-lg">Vendor receipt</h3>
-              <button
-                type="button"
-                onClick={() => setVendorReceiptId(null)}
-                className="text-sm text-[#8aa897]"
-              >
-                Close
-              </button>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+          <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto border border-[#24302a] bg-[#121916] p-5">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 flex rotate-[-28deg] flex-col items-center justify-center select-none"
+            >
+              <p className="text-3xl font-bold tracking-[0.08em] text-[#2f6b4f]/15 uppercase">
+                Vendor Receipt
+              </p>
+              <p className="mt-2 font-serif text-lg italic text-[#2f6b4f]/20">
+                Sabu Online Shopping
+              </p>
             </div>
-            <div className="mt-4 space-y-4 text-sm print:mt-0">
-              <div>
-                <p className="text-xs tracking-[0.2em] text-[#8aa897] uppercase print:text-gray-500">
-                  Sabu Online Shopping
-                </p>
-                <p className="mt-1 text-xl font-medium">
-                  Settlement {vendorReceipt.settlementNumber}
-                </p>
-                <p className="text-[#9eb0a6] print:text-gray-600">
-                  Vendor: {vendorReceipt.vendorName}
-                </p>
-                <p className="text-xs text-[#8aa897] print:text-gray-500">
-                  Period {vendorReceipt.periodStart} →{" "}
-                  {vendorReceipt.periodEnd}
-                  {vendorReceipt.paidAt
-                    ? ` · Paid ${new Date(vendorReceipt.paidAt).toLocaleDateString()}`
-                    : ` · ${formatLabel(vendorReceipt.status)}`}
-                  {vendorReceipt.payoutReference
-                    ? ` · Ref ${vendorReceipt.payoutReference}`
-                    : ""}
-                </p>
+            <div className="relative z-10">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-lg">Vendor receipt</h3>
+                <button
+                  type="button"
+                  onClick={() => setVendorReceiptId(null)}
+                  className="text-sm text-[#8aa897]"
+                >
+                  Close
+                </button>
               </div>
-              <ul className="divide-y divide-[#24302a] border-y border-[#24302a] print:divide-gray-200 print:border-gray-200">
-                {vendorReceipt.items.map((it) => (
-                  <li key={it.entryId} className="space-y-1 py-3">
-                    <p className="font-medium">
-                      {it.orderNumber} · {it.productSummary ?? "Merchandise"}
-                    </p>
-                    <p className="text-xs text-[#9eb0a6] print:text-gray-600">
-                      Sale {it.grossAmount.toFixed(2)} ETB · Sabu fee{" "}
-                      {it.ratePct}% = {it.commissionAmount.toFixed(2)} ETB
-                    </p>
-                    <p className="text-[#9dcdb4] print:text-black">
-                      Vendor net {it.netPayable.toFixed(2)} ETB
-                    </p>
-                  </li>
-                ))}
-              </ul>
-              <div className="space-y-1 text-sm">
-                <p className="flex justify-between gap-4">
-                  <span className="text-[#8aa897] print:text-gray-600">
-                    Gross sales
-                  </span>
-                  <span>{vendorReceipt.grossSales.toFixed(2)} ETB</span>
-                </p>
-                <p className="flex justify-between gap-4">
-                  <span className="text-[#8aa897] print:text-gray-600">
-                    Sabu commission
-                  </span>
-                  <span>{vendorReceipt.commissionTotal.toFixed(2)} ETB</span>
-                </p>
-                <p className="flex justify-between gap-4 text-base font-medium">
-                  <span>Paid to vendor</span>
-                  <span className="text-[#9dcdb4] print:text-black">
-                    {vendorReceipt.netPayable.toFixed(2)} ETB
-                  </span>
-                </p>
-                <p className="pt-2 text-xs text-[#8aa897] print:text-gray-500">
-                  Delivery fees stay with Sabu and are not included.
-                </p>
+              <div className="mt-4 space-y-4 text-sm">
+                <div>
+                  <p className="text-xs tracking-[0.2em] text-[#8aa897] uppercase">
+                    Sabu Online Shopping
+                  </p>
+                  <p className="mt-1 text-xl font-medium">
+                    Settlement {vendorReceipt.settlementNumber}
+                  </p>
+                  <p className="text-[#9eb0a6]">
+                    Vendor: {vendorReceipt.vendorName}
+                  </p>
+                  <p className="text-xs text-[#8aa897]">
+                    Period {vendorReceipt.periodStart} →{" "}
+                    {vendorReceipt.periodEnd}
+                    {vendorReceipt.paidAt
+                      ? ` · Paid ${new Date(vendorReceipt.paidAt).toLocaleDateString()}`
+                      : ` · ${formatLabel(vendorReceipt.status)}`}
+                    {vendorReceipt.payoutReference
+                      ? ` · Ref ${vendorReceipt.payoutReference}`
+                      : ""}
+                  </p>
+                </div>
+                <ul className="divide-y divide-[#24302a] border-y border-[#24302a]">
+                  {vendorReceipt.items.map((it) => (
+                    <li key={it.entryId} className="space-y-1 py-3">
+                      <p className="font-medium">
+                        {it.orderNumber} · {it.productSummary ?? "Merchandise"}
+                      </p>
+                      <p className="text-xs text-[#9eb0a6]">
+                        Sale {it.grossAmount.toFixed(2)} ETB · Sabu fee{" "}
+                        {it.ratePct}% = {it.commissionAmount.toFixed(2)} ETB
+                      </p>
+                      <p className="text-[#9dcdb4]">
+                        Vendor net {it.netPayable.toFixed(2)} ETB
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                <div className="space-y-1 text-sm">
+                  <p className="flex justify-between gap-4">
+                    <span className="text-[#8aa897]">Gross sales</span>
+                    <span>{vendorReceipt.grossSales.toFixed(2)} ETB</span>
+                  </p>
+                  <p className="flex justify-between gap-4">
+                    <span className="text-[#8aa897]">Sabu commission</span>
+                    <span>{vendorReceipt.commissionTotal.toFixed(2)} ETB</span>
+                  </p>
+                  <p className="flex justify-between gap-4 text-base font-medium">
+                    <span>Paid to vendor</span>
+                    <span className="text-[#9dcdb4]">
+                      {vendorReceipt.netPayable.toFixed(2)} ETB
+                    </span>
+                  </p>
+                  <p className="pt-2 text-xs text-[#8aa897]">
+                    Delivery fees stay with Sabu and are not included.
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2 print:hidden">
-              <button
-                type="button"
-                onClick={() => void copyVendorReceipt(vendorReceipt)}
-                className="bg-[#2f6b4f] px-3 py-2 text-sm"
-              >
-                Copy text for vendor
-              </button>
-              <button
-                type="button"
-                onClick={printVendorReceipt}
-                className="border border-[#24302a] px-3 py-2 text-sm"
-              >
-                Print / PDF
-              </button>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyVendorReceipt(vendorReceipt)}
+                  className="bg-[#2f6b4f] px-3 py-2 text-sm"
+                >
+                  Copy text for vendor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => printVendorReceipt(vendorReceipt)}
+                  className="border border-[#24302a] px-3 py-2 text-sm"
+                >
+                  Print / PDF
+                </button>
+              </div>
             </div>
           </div>
         </div>
