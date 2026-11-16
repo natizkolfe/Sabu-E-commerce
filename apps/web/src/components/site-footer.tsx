@@ -12,8 +12,8 @@ import {
 
 const DEFAULT_PHONE = "+251911129726";
 const DEFAULT_WA = "https://wa.me/251911129726";
-const DEFAULT_IG = "https://instagram.com/sabu_placeholder";
-const DEFAULT_TT = "https://tiktok.com/@sabu_placeholder";
+const DEFAULT_IG = "https://www.instagram.com/sabusonlineshop/";
+const DEFAULT_TT = "https://www.tiktok.com/@sabuonlineshope?lang=en";
 const DEFAULT_FB = "https://facebook.com/sabu_placeholder";
 
 export function SiteFooter() {

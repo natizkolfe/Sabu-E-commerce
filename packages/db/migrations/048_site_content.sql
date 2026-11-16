@@ -32,11 +32,11 @@ VALUES (
       'Sabu Online Shopping brings everyday products to your door across Ethiopia — local stock, bulk rates, and special orders when you need something we do not carry yet.',
     'phone', '+251911129726',
     'whatsappUrl', 'https://wa.me/251911129726',
-    'instagramUrl', 'https://instagram.com/sabu_placeholder',
-    'tiktokUrl', 'https://tiktok.com/@sabu_placeholder',
+    'instagramUrl', 'https://www.instagram.com/sabusonlineshop/',
+    'tiktokUrl', 'https://www.tiktok.com/@sabuonlineshope?lang=en',
     'facebookUrl', 'https://facebook.com/sabu_placeholder',
     'contactNote',
-      'Questions or issues? Call or message us, or reach out on social media. Replace the Instagram, TikTok, and Facebook links in Admin when your pages are ready.',
+      'Questions or issues? Call or message us, or reach out on Instagram and TikTok.',
     'faqs',
       jsonb_build_array(
         jsonb_build_object(
