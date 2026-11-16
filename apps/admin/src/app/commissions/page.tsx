@@ -862,17 +862,19 @@ export default function CommissionsPage() {
 
       {vendorReceipt && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
-          <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto border border-[#24302a] bg-[#121916] p-5">
+          <div className="relative w-full max-w-2xl overflow-hidden border border-[#24302a] bg-[#121916] p-6 sm:p-8">
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 flex rotate-[-28deg] flex-col items-center justify-center select-none"
+              className="pointer-events-none absolute inset-0 overflow-hidden"
             >
-              <p className="text-3xl font-bold tracking-[0.08em] text-[#2f6b4f]/15 uppercase">
-                Vendor Receipt
-              </p>
-              <p className="mt-2 font-serif text-lg italic text-[#2f6b4f]/20">
-                Sabu Online Shopping
-              </p>
+              <div className="absolute left-1/2 top-1/2 flex w-[140%] -translate-x-1/2 -translate-y-1/2 rotate-[-28deg] flex-col items-center justify-center select-none">
+                <p className="text-3xl font-bold tracking-[0.08em] text-[#2f6b4f]/15 uppercase sm:text-4xl">
+                  Vendor Receipt
+                </p>
+                <p className="mt-2 font-serif text-lg italic text-[#2f6b4f]/20 sm:text-xl">
+                  Sabu Online Shopping
+                </p>
+              </div>
             </div>
             <div className="relative z-10">
               <div className="flex items-start justify-between gap-3">
