@@ -33,6 +33,7 @@ const links = [
     match: "specialOrders" as const,
   },
   { href: "/orders/track", label: "Track Order", match: "track" as const },
+  { href: "/about", label: "About Sabu", match: "about" as const },
 ];
 
 function linkClass(active: boolean, onHero: boolean) {
@@ -112,6 +113,8 @@ export function SiteHeader() {
         );
       case "track":
         return pathname.startsWith("/orders/track");
+      case "about":
+        return pathname.startsWith("/about");
       default:
         return false;
     }

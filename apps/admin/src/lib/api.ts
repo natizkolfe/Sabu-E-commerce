@@ -1765,4 +1765,49 @@ export const adminApi = {
       createdAt: string;
     }>(`/finance/admin/receipts/${encodeURIComponent(idOrNumber)}`, { token });
   },
+
+  getAboutContent(token: string) {
+    return request<{
+      headline: string;
+      intro: string;
+      phone: string;
+      whatsappUrl: string;
+      instagramUrl: string;
+      tiktokUrl: string;
+      facebookUrl: string;
+      contactNote: string;
+      faqs: Array<{ question: string; answer: string }>;
+    }>("/core/site-content/about", { token });
+  },
+
+  updateAboutContent(
+    token: string,
+    body: {
+      headline?: string;
+      intro?: string;
+      phone?: string;
+      whatsappUrl?: string;
+      instagramUrl?: string;
+      tiktokUrl?: string;
+      facebookUrl?: string;
+      contactNote?: string;
+      faqs?: Array<{ question: string; answer: string }>;
+    },
+  ) {
+    return request<{
+      headline: string;
+      intro: string;
+      phone: string;
+      whatsappUrl: string;
+      instagramUrl: string;
+      tiktokUrl: string;
+      facebookUrl: string;
+      contactNote: string;
+      faqs: Array<{ question: string; answer: string }>;
+    }>("/core/admin/site-content/about", {
+      method: "PUT",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
 };

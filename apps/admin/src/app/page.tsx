@@ -26,6 +26,7 @@ const nav = [
   { href: "/drivers", label: "Drivers" },
   { href: "/deliveries", label: "Delivery dispatch" },
   { href: "/delivery-settings", label: "Delivery pricing" },
+  { href: "/site-content", label: "About Sabu & contact" },
   { href: "/payments", label: "Payment verification" },
   { href: "/studio", label: "Enhance photos" },
   { href: "/studio/try-on", label: "Try-on (optional)" },

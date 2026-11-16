@@ -748,6 +748,20 @@ export const api = {
     });
   },
 
+  getAboutContent() {
+    return request<{
+      headline: string;
+      intro: string;
+      phone: string;
+      whatsappUrl: string;
+      instagramUrl: string;
+      tiktokUrl: string;
+      facebookUrl: string;
+      contactNote: string;
+      faqs: Array<{ question: string; answer: string }>;
+    }>("/core/site-content/about");
+  },
+
   createSpecialOrder(body: {
     firstName: string;
     lastName: string;
