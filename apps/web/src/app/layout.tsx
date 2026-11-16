@@ -1,22 +1,18 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Manrope, Syne } from "next/font/google";
+import "@fontsource/syne/500.css";
+import "@fontsource/syne/600.css";
+import "@fontsource/syne/700.css";
+import "@fontsource/syne/800.css";
+import "@fontsource/manrope/400.css";
+import "@fontsource/manrope/500.css";
+import "@fontsource/manrope/600.css";
+import "@fontsource/manrope/700.css";
 import { AuthProvider } from "../context/auth-context";
 import { CartProvider } from "../context/cart-context";
 import { SiteHeader } from "../components/site-header";
 import { SiteFooter } from "../components/site-footer";
 import "./globals.css";
-
-const syne = Syne({
-  variable: "--font-syne",
-  subsets: ["latin"],
-  weight: ["500", "600", "700", "800"],
-});
-
-const manrope = Manrope({
-  variable: "--font-manrope",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Sabu Online Shopping — Ethiopia",
@@ -31,9 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${syne.variable} ${manrope.variable} min-h-screen antialiased`}
-      >
+      <body className="min-h-screen font-sans antialiased">
         <AuthProvider>
           <CartProvider>
             <Suspense fallback={null}>

@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@fontsource/manrope": "^5.3.0",
+    "@fontsource/syne": "^5.3.0",
     "leaflet": "^1.9.4",
     "next": "^15.5.29",
     "react": "19.1.0",

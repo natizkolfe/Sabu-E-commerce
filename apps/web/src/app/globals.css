@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  /* Self-hosted via @fontsource — avoids Railway next/font Google fetch failures */
+  --font-syne: "Syne", ui-sans-serif, system-ui, sans-serif;
+  --font-manrope: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --sabu-ink: #07140f;
   --sabu-forest: #0b1f17;
   --sabu-leaf: #1a4d3a;
