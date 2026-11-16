@@ -14,6 +14,80 @@ export class ProcurementService {
 
   constructor(private readonly db: DatabaseService) {}
 
+  private mapPartner(r: {
+    id: string;
+    code: string;
+    name: string;
+    country_code: string;
+    city: string | null;
+    contact_name: string | null;
+    whatsapp_e164: string | null;
+    contact_email: string | null;
+    is_active: boolean;
+    partner_portal_enabled: boolean;
+  }) {
+    return {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      countryCode: r.country_code,
+      city: r.city,
+      contactName: r.contact_name,
+      whatsapp: r.whatsapp_e164,
+      email: r.contact_email,
+      isActive: r.is_active,
+      portalEnabled: r.partner_portal_enabled,
+    };
+  }
+
+  private currencyForCountry(countryCode: string) {
+    const map: Record<string, string> = {
+      US: 'USD',
+      CN: 'CNY',
+      AE: 'AED',
+      GB: 'GBP',
+      EU: 'EUR',
+    };
+    return map[countryCode.toUpperCase()] ?? 'USD';
+  }
+
+  private validatePartnerInput(body: {
+    name?: string;
+    countryCode?: string;
+    city?: string | null;
+    contactName?: string | null;
+    whatsapp?: string | null;
+    email?: string | null;
+    code?: string;
+  }) {
+    if (body.name !== undefined && !body.name.trim()) {
+      throw new BadRequestException('Partner name is required');
+    }
+    if (body.countryCode !== undefined) {
+      const cc = body.countryCode.trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(cc)) {
+        throw new BadRequestException('Country code must be 2 letters (US, CN, AE)');
+      }
+    }
+    if (
+      body.whatsapp != null &&
+      body.whatsapp !== '' &&
+      !/^\+[1-9][0-9]{7,14}$/.test(body.whatsapp.trim())
+    ) {
+      throw new BadRequestException('WhatsApp must be E.164 (+971...)');
+    }
+    if (
+      body.email != null &&
+      body.email !== '' &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())
+    ) {
+      throw new BadRequestException('Invalid email');
+    }
+    if (body.code !== undefined && body.code.trim() && !/^[A-Z0-9-]{3,40}$/i.test(body.code.trim())) {
+      throw new BadRequestException('Code must be 3–40 letters, numbers, or dashes');
+    }
+  }
+
   async listPartners() {
     const { rows } = await this.db.query<{
       id: string;
@@ -33,18 +107,155 @@ export class ProcurementService {
        WHERE supplier_type = 'international' AND deleted_at IS NULL
        ORDER BY country_code, name`,
     );
-    return rows.map((r) => ({
-      id: r.id,
-      code: r.code,
-      name: r.name,
-      countryCode: r.country_code,
-      city: r.city,
-      contactName: r.contact_name,
-      whatsapp: r.whatsapp_e164,
-      email: r.contact_email,
-      isActive: r.is_active,
-      portalEnabled: r.partner_portal_enabled,
-    }));
+    return rows.map((r) => this.mapPartner(r));
+  }
+
+  async getPartner(id: string) {
+    const { rows } = await this.db.query<{
+      id: string;
+      code: string;
+      name: string;
+      country_code: string;
+      city: string | null;
+      contact_name: string | null;
+      whatsapp_e164: string | null;
+      contact_email: string | null;
+      is_active: boolean;
+      partner_portal_enabled: boolean;
+    }>(
+      `SELECT id, code, name, country_code, city, contact_name,
+              whatsapp_e164, contact_email, is_active, partner_portal_enabled
+       FROM procurement.suppliers
+       WHERE id = $1 AND supplier_type = 'international' AND deleted_at IS NULL`,
+      [id],
+    );
+    if (!rows[0]) throw new NotFoundException('Partner not found');
+    return this.mapPartner(rows[0]);
+  }
+
+  async createPartner(body: {
+    name: string;
+    countryCode: string;
+    city?: string;
+    contactName?: string;
+    whatsapp?: string;
+    email?: string;
+    code?: string;
+    portalEnabled?: boolean;
+    isActive?: boolean;
+  }) {
+    this.validatePartnerInput(body);
+    if (!body.name?.trim()) {
+      throw new BadRequestException('Partner name is required');
+    }
+    if (!body.countryCode?.trim()) {
+      throw new BadRequestException('Country code is required');
+    }
+    const countryCode = body.countryCode.trim().toUpperCase();
+    const currency = this.currencyForCountry(countryCode);
+    const client = await this.db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const code =
+        body.code?.trim().toUpperCase() ||
+        (await this.nextDocNumber(client, 'PRT'));
+      const whatsapp = body.whatsapp?.trim() || null;
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO procurement.suppliers (
+           code, name, supplier_type, country_code, city, contact_name,
+           contact_phone, whatsapp_e164, contact_email, default_currency,
+           is_active, partner_portal_enabled
+         ) VALUES (
+           $1,$2,'international',$3,$4,$5,$6,$6,$7,$8,$9,$10
+         ) RETURNING id`,
+        [
+          code,
+          body.name.trim(),
+          countryCode,
+          body.city?.trim() || null,
+          body.contactName?.trim() || null,
+          whatsapp,
+          body.email?.trim() || null,
+          currency,
+          body.isActive !== false,
+          body.portalEnabled !== false,
+        ],
+      );
+      await client.query('COMMIT');
+      return this.getPartner(rows[0].id);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      if ((err as { code?: string }).code === '23505') {
+        throw new BadRequestException('Partner code already exists');
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updatePartner(
+    id: string,
+    body: {
+      name?: string;
+      countryCode?: string;
+      city?: string | null;
+      contactName?: string | null;
+      whatsapp?: string | null;
+      email?: string | null;
+      portalEnabled?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    this.validatePartnerInput(body);
+    const current = await this.getPartner(id);
+    const countryCode = body.countryCode
+      ? body.countryCode.trim().toUpperCase()
+      : current.countryCode;
+    const currency =
+      body.countryCode !== undefined
+        ? this.currencyForCountry(countryCode)
+        : null;
+    const whatsapp =
+      body.whatsapp === undefined
+        ? undefined
+        : body.whatsapp?.trim() || null;
+
+    const { rowCount } = await this.db.query(
+      `UPDATE procurement.suppliers SET
+         name = COALESCE($2, name),
+         country_code = COALESCE($3, country_code),
+         city = CASE WHEN $4::boolean THEN $5 ELSE city END,
+         contact_name = CASE WHEN $6::boolean THEN $7 ELSE contact_name END,
+         whatsapp_e164 = CASE WHEN $8::boolean THEN $9 ELSE whatsapp_e164 END,
+         contact_phone = CASE WHEN $8::boolean THEN $9 ELSE contact_phone END,
+         contact_email = CASE WHEN $10::boolean THEN $11 ELSE contact_email END,
+         default_currency = COALESCE($12, default_currency),
+         is_active = COALESCE($13, is_active),
+         partner_portal_enabled = COALESCE($14, partner_portal_enabled),
+         updated_at = now()
+       WHERE id = $1
+         AND supplier_type = 'international'
+         AND deleted_at IS NULL`,
+      [
+        id,
+        body.name?.trim() ?? null,
+        body.countryCode ? countryCode : null,
+        body.city !== undefined,
+        body.city?.trim() || null,
+        body.contactName !== undefined,
+        body.contactName?.trim() || null,
+        body.whatsapp !== undefined,
+        whatsapp ?? null,
+        body.email !== undefined,
+        body.email?.trim() || null,
+        currency,
+        body.isActive ?? null,
+        body.portalEnabled ?? null,
+      ],
+    );
+    if (!rowCount) throw new NotFoundException('Partner not found');
+    return this.getPartner(id);
   }
 
   async listSpecialOrders(opts?: { status?: string; limit?: number }) {

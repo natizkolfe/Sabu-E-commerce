@@ -1699,6 +1699,70 @@ export const adminApi = {
     >("/procurement/admin/partners", { token });
   },
 
+  createPartner(
+    token: string,
+    body: {
+      name: string;
+      countryCode: string;
+      city?: string;
+      contactName?: string;
+      whatsapp?: string;
+      email?: string;
+      code?: string;
+      portalEnabled?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    return request<{
+      id: string;
+      code: string;
+      name: string;
+      countryCode: string;
+      city: string | null;
+      contactName: string | null;
+      whatsapp: string | null;
+      email: string | null;
+      isActive: boolean;
+      portalEnabled: boolean;
+    }>("/procurement/admin/partners", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  updatePartner(
+    token: string,
+    id: string,
+    body: {
+      name?: string;
+      countryCode?: string;
+      city?: string | null;
+      contactName?: string | null;
+      whatsapp?: string | null;
+      email?: string | null;
+      portalEnabled?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    return request<{
+      id: string;
+      code: string;
+      name: string;
+      countryCode: string;
+      city: string | null;
+      contactName: string | null;
+      whatsapp: string | null;
+      email: string | null;
+      isActive: boolean;
+      portalEnabled: boolean;
+    }>(`/procurement/admin/partners/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
   assignSpecialOrderPartner(
     token: string,
     requestId: string,

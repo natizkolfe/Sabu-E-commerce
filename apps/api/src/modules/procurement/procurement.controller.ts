@@ -89,6 +89,44 @@ export class ProcurementController {
     return this.procurementService.listPartners();
   }
 
+  @Post('admin/partners')
+  @RequirePermissions('partners.write')
+  createPartner(
+    @Body()
+    body: {
+      name: string;
+      countryCode: string;
+      city?: string;
+      contactName?: string;
+      whatsapp?: string;
+      email?: string;
+      code?: string;
+      portalEnabled?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    return this.procurementService.createPartner(body);
+  }
+
+  @Patch('admin/partners/:id')
+  @RequirePermissions('partners.write')
+  updatePartner(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      countryCode?: string;
+      city?: string | null;
+      contactName?: string | null;
+      whatsapp?: string | null;
+      email?: string | null;
+      portalEnabled?: boolean;
+      isActive?: boolean;
+    },
+  ) {
+    return this.procurementService.updatePartner(id, body);
+  }
+
   @Post('admin/special-orders/:id/assign')
   @RequirePermissions('special_orders.write')
   assign(
