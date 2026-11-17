@@ -8,9 +8,11 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
+import { NotifyModule } from '../notify/notify.module';
 
 @Module({
   imports: [
+    NotifyModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

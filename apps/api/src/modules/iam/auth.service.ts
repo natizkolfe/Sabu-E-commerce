@@ -20,6 +20,7 @@ import {
 } from './auth.types';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { OtpDeliveryService } from '../notify/otp-delivery.service';
 
 type UserRow = {
   id: string;
@@ -39,6 +40,7 @@ export class AuthService {
     private readonly db: DatabaseService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly otpDelivery: OtpDeliveryService,
   ) {}
 
   async requestOtp(dto: RequestOtpDto, ip?: string) {
@@ -105,12 +107,31 @@ export class AuthService {
       );
     }
 
+    const delivery = await this.otpDelivery.deliverOtp(phone, code);
     const returnOtp =
       !isProduction && this.config.get('AUTH_DEV_RETURN_OTP') === 'true';
+
+    // In production without a working channel, surface a clear error.
+    if (
+      isProduction &&
+      !delivery.ok &&
+      delivery.status !== 'pending_click'
+    ) {
+      throw new BadRequestException(
+        delivery.channel === 'sms'
+          ? 'Could not send SMS code. Check Twilio configuration.'
+          : 'Could not send WhatsApp code. Check WhatsApp Cloud API / OTP template.',
+      );
+    }
 
     return {
       ok: true,
       expiresAt: expiresAt.toISOString(),
+      channel: delivery.channel,
+      deliveryStatus: delivery.status,
+      ...(delivery.deepLink && !delivery.ok
+        ? { whatsappDeepLink: delivery.deepLink }
+        : {}),
       ...(returnOtp ? { devCode: code } : {}),
     };
   }

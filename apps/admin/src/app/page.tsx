@@ -40,6 +40,7 @@ export default function AdminHome() {
   const [phone, setPhone] = useState("+2519");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
+  const [otpHint, setOtpHint] = useState<string | null>(null);
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +63,17 @@ export default function AdminHome() {
     try {
       const res = await adminApi.requestOtp(phone, "Admin");
       setDevCode(res.devCode ?? null);
+      if (res.channel === "sms") {
+        setOtpHint("Code sent by SMS (Twilio). Check your US phone.");
+      } else if (res.channel === "whatsapp") {
+        setOtpHint(
+          res.deliveryStatus === "sent"
+            ? "Code sent on WhatsApp. Check your Ethiopian number."
+            : "WhatsApp delivery pending — open WhatsApp if linked, or check Cloud API / OTP template settings.",
+        );
+      } else {
+        setOtpHint(null);
+      }
       setStep("code");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "OTP failed");
@@ -125,6 +137,9 @@ export default function AdminHome() {
             </form>
           ) : (
             <form onSubmit={verify} className="mt-8 space-y-4">
+              {otpHint && (
+                <p className="text-xs text-[#8aa897]">{otpHint}</p>
+              )}
               {devCode && (
                 <p className="text-xs text-[#8aa897]">Dev code: {devCode}</p>
               )}

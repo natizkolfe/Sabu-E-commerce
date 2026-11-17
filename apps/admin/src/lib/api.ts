@@ -128,18 +128,22 @@ export type DispatchSettings = {
 
 export const adminApi = {
   requestOtp(phone: string, fullName?: string) {
-    return request<{ ok: boolean; expiresAt: string; devCode?: string }>(
-      "/auth/otp/request",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          phone,
-          fullName,
-          clientType: "admin_web",
-          purpose: "login",
-        }),
-      },
-    );
+    return request<{
+      ok: boolean;
+      expiresAt: string;
+      channel?: "sms" | "whatsapp" | "dev";
+      deliveryStatus?: string;
+      whatsappDeepLink?: string;
+      devCode?: string;
+    }>("/auth/otp/request", {
+      method: "POST",
+      body: JSON.stringify({
+        phone,
+        fullName,
+        clientType: "admin_web",
+        purpose: "login",
+      }),
+    });
   },
 
   verifyOtp(phone: string, code: string) {
