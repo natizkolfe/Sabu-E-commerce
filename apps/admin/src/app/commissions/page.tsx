@@ -66,6 +66,22 @@ function payoutBadge(state: "unpaid" | "settlement_pending" | "paid") {
   );
 }
 
+function receiptQrData(s: Settlement): string {
+  // Compact, phone-scannable verification text (not raw UUID dump only).
+  return [
+    "Sabu Online Shopping",
+    `Settlement ${s.settlementNumber}`,
+    `Vendor ${s.vendorName}`,
+    `Net ${s.netPayable.toFixed(2)} ETB`,
+    `ID ${s.id}`,
+  ].join("\n");
+}
+
+function receiptQrImageUrl(s: Settlement, size = 160): string {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(receiptQrData(s))}`;
+}
+
+/** Plain-text for WhatsApp / clipboard paste. */
 function formatVendorReceipt(s: Settlement): string {
   const lines: string[] = [
     "Sabu Online Shopping — Vendor settlement receipt",
@@ -96,8 +112,6 @@ function formatVendorReceipt(s: Settlement): string {
     `Gross sales: ${s.grossSales.toFixed(2)} ETB`,
     `Sabu commission: ${s.commissionTotal.toFixed(2)} ETB`,
     `Amount paid to vendor: ${s.netPayable.toFixed(2)} ETB`,
-    "",
-    `QR payload: ${s.receiptQrPayload ?? s.settlementNumber}`,
     "",
     "Delivery fees stay with Sabu and are not included in vendor payouts.",
     "Thank you for selling with Sabu.",
@@ -543,14 +557,7 @@ export default function CommissionsPage() {
   }
 
   function printVendorReceipt(s: Settlement) {
-    const qr = encodeURIComponent(
-      s.receiptQrPayload ??
-        JSON.stringify({
-          type: "sabu_settlement",
-          settlementNumber: s.settlementNumber,
-          settlementId: s.id,
-        }),
-    );
+    const qrSrc = receiptQrImageUrl(s, 128);
     const itemsHtml = s.items
       .map(
         (it) => `
@@ -567,9 +574,9 @@ export default function CommissionsPage() {
         : "";
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Sabu Online Shopping</title>
 <style>
-@page{margin:16mm}body{margin:0;font-family:Georgia,serif;color:#111}
+@page{margin:16mm}body{margin:0;font-family:Georgia,serif;color:#111;background:#fff}
 .sheet{position:relative;max-width:720px;margin:0 auto;padding:28px 8px;overflow:hidden}
-.watermark{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;transform:rotate(-28deg)}
+.watermark{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;transform:rotate(-28deg);user-select:none}
 .watermark .line1{font-family:Segoe UI,Helvetica,sans-serif;font-size:42px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(15,61,40,.10)}
 .watermark .line2{margin-top:10px;font-size:22px;font-style:italic;color:rgba(15,61,40,.12)}
 .content{position:relative;z-index:1}.brand{font-family:Segoe UI,sans-serif;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#666}
@@ -578,7 +585,7 @@ h1{margin:8px 0 0;font-size:28px;font-family:Segoe UI,sans-serif}.meta{margin-to
 .item-title{margin:0;font-weight:600;font-size:15px}.muted{margin:4px 0 0;color:#666;font-size:12px}.net{margin:4px 0 0;font-weight:600}
 .totals{margin-top:18px;font-size:14px}.row{display:flex;justify-content:space-between;gap:16px;margin:4px 0}
 .row.strong{margin-top:10px;font-size:16px;font-weight:700}.note{margin-top:14px;color:#777;font-size:12px}
-.qr{margin-top:18px;display:flex;gap:16px;align-items:center}.qr img{width:96px;height:96px}
+.qr{margin-top:18px;display:flex;gap:16px;align-items:center}.qr img{width:128px;height:128px;border:1px solid #eee}
 </style></head><body>
 <div class="sheet">
 <div class="watermark" aria-hidden="true"><div class="line1">Vendor Receipt</div><div class="line2">Sabu Online Shopping</div></div>
@@ -595,11 +602,11 @@ ${adj}
 <div class="row strong"><span>Paid to vendor</span><span>${s.netPayable.toFixed(2)} ETB</span></div>
 <p class="note">Delivery fees stay with Sabu and are not included. Rates shown are snapshotted at sale time.</p>
 <div class="qr">
-<img alt="QR" src="https://api.qrserver.com/v1/create-qr-code/?size=96x96&data=${qr}"/>
-<div><p class="muted">Scan to verify receipt</p><p class="muted">${escapeHtml(s.settlementNumber)}</p></div>
+<img alt="QR code" src="${qrSrc}"/>
+<div><p class="muted">Scan with phone camera to verify</p><p class="muted">${escapeHtml(s.settlementNumber)}</p></div>
 </div>
 </div></div></div>
-<script>window.onload=function(){document.title="Sabu Online Shopping";setTimeout(function(){window.focus();window.print()},150)}</script>
+<script>window.onload=function(){document.title="Sabu Online Shopping";setTimeout(function(){window.focus();window.print()},200)}</script>
 </body></html>`;
     const w = window.open("", "_blank");
     if (!w) {
@@ -1658,29 +1665,185 @@ ${adj}
           ) : null}
 
           {receiptSettlement ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-              <div className="max-h-[90vh] w-full max-w-lg overflow-auto border border-[#2a332e] bg-[#121816] p-5">
-                <div className="flex justify-between">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+              <div className="max-h-[92vh] w-full max-w-xl overflow-auto border border-[#2a332e] bg-[#0f1412] shadow-xl">
+                <div className="flex items-center justify-between gap-3 border-b border-[#2a332e] px-4 py-3">
                   <h3 className="font-medium">Vendor receipt</h3>
-                  <button
-                    type="button"
-                    className="text-xs text-[#8a9]"
-                    onClick={() => setVendorReceiptId(null)}
-                  >
-                    Close
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="border border-[#3a443e] px-2 py-1 text-xs"
+                      onClick={() => copyVendorReceipt(receiptSettlement)}
+                    >
+                      Copy text
+                    </button>
+                    <button
+                      type="button"
+                      className="border border-[#3d8f6a] bg-[#1a2e24] px-2 py-1 text-xs"
+                      onClick={() => printVendorReceipt(receiptSettlement)}
+                    >
+                      Print / PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs text-[#8aa897]"
+                      onClick={() => setVendorReceiptId(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
-                <pre className="mt-3 whitespace-pre-wrap text-xs text-[#cfc]">
-                  {formatVendorReceipt(receiptSettlement)}
-                </pre>
-                {receiptSettlement.payoutReceiptUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    alt="Payout proof"
-                    className="mt-3 max-h-48 border border-[#2a332e]"
-                    src={`${API_URL}${receiptSettlement.payoutReceiptUrl}`}
-                  />
-                ) : null}
+
+                {/* Old branded receipt: white sheet + diagonal watermark + scannable QR */}
+                <div className="bg-[#1a221e] p-4 sm:p-6">
+                  <div className="relative mx-auto max-w-[520px] overflow-hidden bg-white px-6 py-8 text-[#111]">
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 flex select-none flex-col items-center justify-center"
+                      style={{ transform: "rotate(-28deg)" }}
+                    >
+                      <div
+                        className="text-[34px] font-bold uppercase tracking-[0.08em] sm:text-[42px]"
+                        style={{
+                          fontFamily: "Segoe UI, Helvetica, Arial, sans-serif",
+                          color: "rgba(15,61,40,0.10)",
+                        }}
+                      >
+                        Vendor Receipt
+                      </div>
+                      <div
+                        className="mt-2 text-[18px] italic sm:text-[22px]"
+                        style={{
+                          fontFamily: "Georgia, Times New Roman, serif",
+                          color: "rgba(15,61,40,0.12)",
+                        }}
+                      >
+                        Sabu Online Shopping
+                      </div>
+                    </div>
+
+                    <div className="relative z-[1]">
+                      <p
+                        className="text-[11px] uppercase tracking-[0.22em] text-[#666]"
+                        style={{
+                          fontFamily: "Segoe UI, Helvetica, Arial, sans-serif",
+                        }}
+                      >
+                        Sabu Online Shopping
+                      </p>
+                      <h1
+                        className="mt-2 text-[26px] font-bold tracking-tight sm:text-[28px]"
+                        style={{
+                          fontFamily: "Segoe UI, Helvetica, Arial, sans-serif",
+                        }}
+                      >
+                        Settlement {receiptSettlement.settlementNumber}
+                      </h1>
+                      <p className="mt-2 text-sm text-[#555]">
+                        Vendor: {receiptSettlement.vendorName} · Status:{" "}
+                        {receiptSettlement.status === "paid"
+                          ? "Paid"
+                          : formatLabel(receiptSettlement.status)}
+                      </p>
+                      <p className="mt-1 text-xs text-[#777]">
+                        Period {receiptSettlement.periodStart} →{" "}
+                        {receiptSettlement.periodEnd}
+                        {receiptSettlement.paidAt
+                          ? ` · Paid ${new Date(receiptSettlement.paidAt).toLocaleDateString()}`
+                          : ""}
+                        {receiptSettlement.payoutReference
+                          ? ` · Ref ${receiptSettlement.payoutReference}`
+                          : ""}
+                      </p>
+
+                      {receiptSettlement.items.map((it) => (
+                        <div
+                          key={it.entryId}
+                          className="border-t border-[#ddd] py-3.5 first:mt-4"
+                        >
+                          <p className="text-[15px] font-semibold">
+                            {it.orderNumber} ·{" "}
+                            {it.productSummary ?? "Merchandise"}
+                          </p>
+                          <p className="mt-1 text-xs text-[#666]">
+                            Sale {it.grossAmount.toFixed(2)} ETB · Sabu fee{" "}
+                            {it.ratePct}% = {it.commissionAmount.toFixed(2)} ETB
+                          </p>
+                          <p className="mt-1 text-sm font-semibold">
+                            Vendor net {it.netPayable.toFixed(2)} ETB
+                          </p>
+                        </div>
+                      ))}
+
+                      <div className="mt-4 space-y-1 border-t border-[#ddd] pt-4 text-sm">
+                        <div className="flex justify-between gap-4">
+                          <span>Gross sales</span>
+                          <span>
+                            {receiptSettlement.grossSales.toFixed(2)} ETB
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <span>Sabu commission</span>
+                          <span>
+                            {receiptSettlement.commissionTotal.toFixed(2)} ETB
+                          </span>
+                        </div>
+                        {receiptSettlement.adjustmentsTotal ? (
+                          <div className="flex justify-between gap-4">
+                            <span>Adjustments</span>
+                            <span>
+                              {receiptSettlement.adjustmentsTotal.toFixed(2)}{" "}
+                              ETB
+                            </span>
+                          </div>
+                        ) : null}
+                        <div className="mt-2 flex justify-between gap-4 text-base font-bold">
+                          <span>Paid to vendor</span>
+                          <span>
+                            {receiptSettlement.netPayable.toFixed(2)} ETB
+                          </span>
+                        </div>
+                        <p className="mt-3 text-xs text-[#777]">
+                          Delivery fees stay with Sabu and are not included.
+                          Rates shown are snapshotted at sale time.
+                        </p>
+                      </div>
+
+                      <div className="mt-5 flex items-center gap-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          alt={`QR for ${receiptSettlement.settlementNumber}`}
+                          width={128}
+                          height={128}
+                          className="h-32 w-32 border border-[#eee] bg-white"
+                          src={receiptQrImageUrl(receiptSettlement, 128)}
+                        />
+                        <div>
+                          <p className="text-xs text-[#666]">
+                            Scan with phone camera to verify
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-[#333]">
+                            {receiptSettlement.settlementNumber}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {receiptSettlement.payoutReceiptUrl ? (
+                    <div className="mx-auto mt-4 max-w-[520px]">
+                      <p className="mb-2 text-xs text-[#8aa897]">
+                        Payout proof upload
+                      </p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        alt="Payout proof"
+                        className="max-h-48 border border-[#2a332e]"
+                        src={`${API_URL}${receiptSettlement.payoutReceiptUrl}`}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           ) : null}
