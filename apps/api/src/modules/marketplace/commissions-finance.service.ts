@@ -13,6 +13,7 @@ import {
   defaultRulePriority,
   ETHIOPIA_TZ,
   money2,
+  resolvePayoutState,
   RULE_PRESETS,
   type ResolvedCommissionRate,
 } from './commission-engine';
@@ -678,16 +679,11 @@ export class CommissionsFinanceService {
     let mapped = rows.map((r) => {
       const gross = Number(r.gross_amount);
       const commission = Number(r.commission_amount);
-      const payoutState =
-        r.settlement_status === 'paid'
-          ? 'paid'
-          : r.settlement_status === 'partially_paid'
-            ? 'settlement_pending'
-            : r.settlement_id
-              ? 'settlement_pending'
-              : r.status === 'paid_out'
-                ? 'paid'
-                : 'unpaid';
+      const payoutState = resolvePayoutState({
+        entryStatus: r.status,
+        settlementId: r.settlement_id,
+        settlementStatus: r.settlement_status,
+      });
       return {
         id: r.id,
         orderId: r.order_id,
@@ -700,7 +696,7 @@ export class CommissionsFinanceService {
         commissionAmount: commission,
         netPayable: money2(gross - commission),
         status: r.status,
-        payoutState: payoutState as 'unpaid' | 'settlement_pending' | 'paid',
+        payoutState,
         settlementId: r.settlement_id,
         settlementNumber: r.settlement_number,
         settlementStatus: r.settlement_status,
@@ -718,12 +714,20 @@ export class CommissionsFinanceService {
   }
 
   async commissionsSummary(opts: CommissionSalesFilter = {}) {
-    const rows = await this.listFilteredCommissions({ ...opts, limit: 1000 });
+    const rows = await this.listFilteredCommissions({
+      ...opts,
+      payoutState: undefined,
+      limit: 1000,
+    });
     const unpaid = rows.filter((r) => r.payoutState === 'unpaid');
     const pending = rows.filter((r) => r.payoutState === 'settlement_pending');
     const paid = rows.filter((r) => r.payoutState === 'paid');
     const gross = rows.reduce((s, r) => s + r.grossAmount, 0);
     const commission = rows.reduce((s, r) => s + r.commissionAmount, 0);
+    const vendorNet = money2(gross - commission);
+    const unpaidNet = money2(unpaid.reduce((s, r) => s + r.netPayable, 0));
+    const pendingNet = money2(pending.reduce((s, r) => s + r.netPayable, 0));
+    const paidNet = money2(paid.reduce((s, r) => s + r.netPayable, 0));
     const avgRate =
       gross > 0 ? money2((commission / gross) * 100) : 0;
 
@@ -743,6 +747,7 @@ export class CommissionsFinanceService {
         const priorFrom = new Date(from - span).toISOString();
         const priorRows = await this.listFilteredCommissions({
           ...opts,
+          payoutState: undefined,
           dateFrom: priorFrom,
           dateTo: priorTo,
           limit: 1000,
@@ -760,29 +765,37 @@ export class CommissionsFinanceService {
       }
     }
 
-    const { rows: adj } = await this.db.query<{
-      approved_sum: string;
-    }>(
-      `SELECT COALESCE(sum(adjustment_amount),0)::text AS approved_sum
-       FROM marketplace.financial_adjustments
-       WHERE status = 'approved'
-         ${opts.vendorId ? 'AND vendor_id = $1' : ''}`,
-      opts.vendorId ? [opts.vendorId] : [],
-    );
+    let adjustmentsApproved = 0;
+    try {
+      const { rows: adj } = await this.db.query<{
+        approved_sum: string;
+      }>(
+        `SELECT COALESCE(sum(adjustment_amount),0)::text AS approved_sum
+         FROM marketplace.financial_adjustments
+         WHERE status = 'approved'
+           ${opts.vendorId ? 'AND vendor_id = $1' : ''}`,
+        opts.vendorId ? [opts.vendorId] : [],
+      );
+      adjustmentsApproved = money2(Number(adj[0]?.approved_sum ?? 0));
+    } catch {
+      adjustmentsApproved = 0;
+    }
 
     return {
       entryCount: rows.length,
       grossSales: money2(gross),
       accruedCommission: money2(commission),
+      /** Gross − Sabu fee — total remittable to vendors across all payout states. */
+      vendorNet,
       avgEffectiveRatePct: avgRate,
-      outstandingLiability: money2(
-        unpaid.reduce((s, r) => s + r.netPayable, 0) +
-          pending.reduce((s, r) => s + r.netPayable, 0),
-      ),
-      unpaidNet: money2(unpaid.reduce((s, r) => s + r.netPayable, 0)),
-      pendingNet: money2(pending.reduce((s, r) => s + r.netPayable, 0)),
-      paidNet: money2(paid.reduce((s, r) => s + r.netPayable, 0)),
-      adjustmentsApproved: money2(Number(adj[0]?.approved_sum ?? 0)),
+      /** Still owed: not yet remitted (unpaid + awaiting remittance). */
+      outstandingLiability: money2(unpaidNet + pendingNet),
+      unpaidNet,
+      pendingNet,
+      paidNet,
+      adjustmentsApproved,
+      /** Identity check: vendorNet ≈ unpaid + pending + paid */
+      vendorNetCheck: money2(unpaidNet + pendingNet + paidNet),
       priorPeriod: prior,
     };
   }
@@ -1528,7 +1541,9 @@ export class CommissionsFinanceService {
         );
       }
       await client.query(
-        `UPDATE marketplace.commission_entries SET settlement_id = NULL
+        `UPDATE marketplace.commission_entries
+         SET settlement_id = NULL,
+             status = CASE WHEN status = 'paid_out' THEN 'finalized' ELSE status END
          WHERE settlement_id = $1`,
         [id],
       );

@@ -19,6 +19,25 @@ export function commissionFromGross(gross: number, ratePct: number): number {
   return money2((gross * ratePct) / 100);
 }
 
+/**
+ * Single source of truth for payout badges + summary math.
+ * Vendor net still owed unless the settlement is fully paid.
+ */
+export function resolvePayoutState(opts: {
+  entryStatus: string;
+  settlementId: string | null;
+  settlementStatus: string | null;
+}): 'unpaid' | 'settlement_pending' | 'paid' {
+  const stl = opts.settlementStatus;
+  if (stl === 'paid') return 'paid';
+  if (stl === 'cancelled' || !opts.settlementId) {
+    // Orphan paid_out (cancelled settlement, or bad backfill) still counts as unpaid
+    return 'unpaid';
+  }
+  // draft | approved | pending_payment | partially_paid | adjustment_required
+  return 'settlement_pending';
+}
+
 export type ResolvedCommissionRate = {
   ruleId: string | null;
   code: string;

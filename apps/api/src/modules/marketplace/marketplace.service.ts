@@ -10,6 +10,7 @@ import type { AuthUser } from '../iam/auth.types';
 import {
   commissionFromGross,
   money2,
+  resolvePayoutState,
 } from './commission-engine';
 import { CommissionsFinanceService } from './commissions-finance.service';
 
@@ -263,14 +264,11 @@ export class MarketplaceService {
     return rows.map((r) => {
       const gross = Number(r.gross_amount);
       const commission = Number(r.commission_amount);
-      const payoutState =
-        r.settlement_status === 'paid'
-          ? 'paid'
-          : r.settlement_id
-            ? 'settlement_pending'
-            : r.status === 'paid_out'
-              ? 'paid'
-              : 'unpaid';
+      const payoutState = resolvePayoutState({
+        entryStatus: r.status,
+        settlementId: r.settlement_id,
+        settlementStatus: r.settlement_status,
+      });
       return {
         id: r.id,
         orderId: r.order_id,
@@ -282,7 +280,7 @@ export class MarketplaceService {
         ratePct: Number(r.rate_pct),
         commissionAmount: commission,
         /** Product sales minus Sabu commission — what admin remits to the vendor. */
-        netPayable: Math.round((gross - commission) * 100) / 100,
+        netPayable: money2(gross - commission),
         status: r.status,
         payoutState,
         settlementId: r.settlement_id,

@@ -1570,12 +1570,14 @@ export const adminApi = {
       entryCount: number;
       grossSales: number;
       accruedCommission: number;
+      vendorNet: number;
       avgEffectiveRatePct: number;
       outstandingLiability: number;
       unpaidNet: number;
       pendingNet: number;
       paidNet: number;
       adjustmentsApproved: number;
+      vendorNetCheck: number;
       priorPeriod: {
         grossSales: number;
         commission: number;

@@ -956,32 +956,58 @@ ${adj}
       )}
 
       {tab === "overview" && summary ? (
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[
-            ["Gross sales", summary.grossSales, "ETB"],
-            ["Accrued commission", summary.accruedCommission, "ETB"],
-            ["Avg effective rate", summary.avgEffectiveRatePct, "%"],
-            ["Outstanding liability", summary.outstandingLiability, "ETB"],
-            ["Unpaid to vendors", summary.unpaidNet, "ETB"],
-            ["Adjustments approved", summary.adjustmentsApproved, "ETB"],
-          ].map(([label, value, unit]) => (
-            <div
-              key={String(label)}
-              className="border border-[#2a332e] bg-[#121816] p-4"
-            >
-              <p className="text-xs uppercase tracking-wide text-[#8a9]">
-                {label}
-              </p>
-              <p className="mt-2 text-2xl tabular-nums">
-                {Number(value).toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
-                })}{" "}
-                <span className="text-sm text-[#8a9]">{unit}</span>
-              </p>
-            </div>
-          ))}
+        <section className="space-y-3">
+          <p className="text-xs text-[#8a9]">
+            Gross {summary.grossSales.toFixed(2)} − Sabu fee{" "}
+            {summary.accruedCommission.toFixed(2)} = vendor net{" "}
+            {summary.vendorNet.toFixed(2)} ETB · of which unpaid{" "}
+            {summary.unpaidNet.toFixed(2)} + awaiting{" "}
+            {summary.pendingNet.toFixed(2)} + paid {summary.paidNet.toFixed(2)}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {(
+              [
+                ["Gross sales", summary.grossSales, "ETB"],
+                ["Sabu commission", summary.accruedCommission, "ETB"],
+                ["Vendor net (gross − fee)", summary.vendorNet, "ETB"],
+                [
+                  "Unpaid to vendors",
+                  summary.unpaidNet,
+                  "ETB",
+                ],
+                [
+                  "Awaiting remittance",
+                  summary.pendingNet,
+                  "ETB",
+                ],
+                ["Paid to vendors", summary.paidNet, "ETB"],
+                [
+                  "Still owed (unpaid + awaiting)",
+                  summary.outstandingLiability,
+                  "ETB",
+                ],
+                ["Avg effective rate", summary.avgEffectiveRatePct, "%"],
+                ["Adjustments approved", summary.adjustmentsApproved, "ETB"],
+              ] as const
+            ).map(([label, value, unit]) => (
+              <div
+                key={String(label)}
+                className="border border-[#2a332e] bg-[#121816] p-4"
+              >
+                <p className="text-xs uppercase tracking-wide text-[#8a9]">
+                  {label}
+                </p>
+                <p className="mt-2 text-2xl tabular-nums">
+                  {Number(value).toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  <span className="text-sm text-[#8a9]">{unit}</span>
+                </p>
+              </div>
+            ))}
+          </div>
           {summary.priorPeriod ? (
-            <div className="border border-[#2a332e] bg-[#121816] p-4 sm:col-span-2 lg:col-span-3">
+            <div className="border border-[#2a332e] bg-[#121816] p-4">
               <p className="text-xs text-[#8a9]">vs prior period</p>
               <p className="mt-1 text-sm">
                 Gross{" "}
@@ -996,7 +1022,7 @@ ${adj}
               </p>
             </div>
           ) : null}
-          <div className="border border-[#2a332e] bg-[#121816] p-4 sm:col-span-2 lg:col-span-3">
+          <div className="border border-[#2a332e] bg-[#121816] p-4">
             <p className="text-sm">
               Global default:{" "}
               <strong>{rule?.ratePct ?? "—"}%</strong> ({rule?.code})
