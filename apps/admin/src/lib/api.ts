@@ -1497,8 +1497,35 @@ export const adminApi = {
     });
   },
 
-  listCommissions(token: string, vendorId?: string) {
-    const qs = vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : "";
+  listCommissions(
+    token: string,
+    params?: string | {
+      vendorId?: string;
+      status?: string;
+      payoutState?: string;
+      categoryId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      rateMin?: number;
+      rateMax?: number;
+      amountMin?: number;
+      amountMax?: number;
+      orderNumber?: string;
+      settlementNumber?: string;
+      channel?: string;
+      sort?: string;
+      limit?: number;
+    },
+  ) {
+    const qs = new URLSearchParams();
+    if (typeof params === "string") {
+      if (params) qs.set("vendorId", params);
+    } else if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v != null && v !== "") qs.set(k, String(v));
+      });
+    }
+    const suffix = qs.toString() ? `?${qs}` : "";
     return request<
       Array<{
         id: string;
@@ -1517,9 +1544,179 @@ export const adminApi = {
         settlementStatus: string | null;
         paidAt: string | null;
         entryType: string;
+        channel?: string | null;
         createdAt: string;
       }>
-    >(`/marketplace/admin/commissions${qs}`, { token });
+    >(`/marketplace/admin/commissions${suffix}`, { token });
+  },
+
+  commissionsSummary(
+    token: string,
+    params?: {
+      vendorId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      categoryId?: string;
+    },
+  ) {
+    const qs = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, String(v));
+      });
+    }
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<{
+      entryCount: number;
+      grossSales: number;
+      accruedCommission: number;
+      avgEffectiveRatePct: number;
+      outstandingLiability: number;
+      unpaidNet: number;
+      pendingNet: number;
+      paidNet: number;
+      adjustmentsApproved: number;
+      priorPeriod: {
+        grossSales: number;
+        commission: number;
+        deltaGrossPct: number | null;
+        deltaCommissionPct: number | null;
+      } | null;
+    }>(`/marketplace/admin/commissions/summary${suffix}`, { token });
+  },
+
+  commissionsAnalytics(
+    token: string,
+    params?: { vendorId?: string; dateFrom?: string; dateTo?: string },
+  ) {
+    const qs = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, String(v));
+      });
+    }
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<{
+      commissionTrend: Array<{
+        month: string;
+        grossSales: number;
+        commission: number;
+      }>;
+      vendorCompare: Array<{
+        vendorId: string;
+        vendorName: string;
+        grossSales: number;
+        commission: number;
+      }>;
+      rateDistribution: Array<{ rate: string; count: number }>;
+      settlementPerformance: {
+        total: number;
+        paid: number;
+        partial: number;
+        pending: number;
+        cancelled: number;
+        avgDaysToPay: number | null;
+      };
+      topVendors: Array<{
+        vendorId: string;
+        vendorName: string;
+        commission: number;
+        grossSales: number;
+      }>;
+      summary: {
+        entryCount: number;
+        grossSales: number;
+        accruedCommission: number;
+        avgEffectiveRatePct: number;
+        outstandingLiability: number;
+      };
+    }>(`/marketplace/admin/commissions/analytics${suffix}`, { token });
+  },
+
+  exportCommissionsReport(
+    token: string,
+    params: {
+      type: "sales" | "settlements" | "adjustments" | "rules";
+      format?: "csv" | "json";
+      vendorId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+  ) {
+    const qs = new URLSearchParams();
+    qs.set("type", params.type);
+    qs.set("format", params.format ?? "csv");
+    if (params.vendorId) qs.set("vendorId", params.vendorId);
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    return request<{
+      format: string;
+      type: string;
+      filename?: string;
+      csv?: string;
+      headers?: string[];
+      rows?: Array<Record<string, string>>;
+    }>(`/marketplace/admin/commissions/export?${qs}`, { token });
+  },
+
+  vendorAutocomplete(token: string, q: string) {
+    return request<
+      Array<{
+        id: string;
+        vendorCode: string;
+        displayName: string;
+        businessName: string;
+        status: string;
+      }>
+    >(
+      `/marketplace/admin/vendors-autocomplete?q=${encodeURIComponent(q)}`,
+      { token },
+    );
+  },
+
+  vendorCommissionDetail(token: string, id: string) {
+    return request<{
+      vendor: {
+        id: string;
+        vendorCode: string;
+        businessName: string;
+        displayName: string;
+        phone: string | null;
+        email: string | null;
+        status: string;
+        commissionRatePct: number | null;
+        createdAt: string;
+      };
+      summary: {
+        entryCount: number;
+        grossSales: number;
+        accruedCommission: number;
+        avgEffectiveRatePct: number;
+        outstandingLiability: number;
+        unpaidNet: number;
+        pendingNet: number;
+        paidNet: number;
+        adjustmentsApproved: number;
+      };
+      recentSales: Array<{
+        id: string;
+        orderNumber: string;
+        grossAmount: number;
+        ratePct: number;
+        commissionAmount: number;
+        netPayable: number;
+        payoutState: string;
+        createdAt: string;
+      }>;
+      activeRules: Array<{
+        id: string;
+        code: string;
+        name: string;
+        ratePct: number;
+        kind: string;
+        priority: number;
+      }>;
+    }>(`/marketplace/admin/vendors/${id}/commission-detail`, { token });
   },
 
   commissionRule(token: string) {
@@ -1529,25 +1726,148 @@ export const adminApi = {
     );
   },
 
-  listSettlements(token: string, vendorId?: string) {
-    const qs = vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : "";
+  patchCommissionRule(
+    token: string,
+    body: { ratePct: number; confirmLargeChange?: boolean },
+  ) {
+    return request("/marketplace/admin/commission-rule", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  listCommissionRules(
+    token: string,
+    params?: { includeArchived?: boolean; scope?: string },
+  ) {
+    const qs = new URLSearchParams();
+    if (params?.includeArchived) qs.set("includeArchived", "1");
+    if (params?.scope) qs.set("scope", params.scope);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<
+      Array<{
+        id: string;
+        code: string;
+        name: string;
+        scope: string;
+        kind: string;
+        priority: number;
+        vendorId: string | null;
+        vendorName: string | null;
+        categoryId: string | null;
+        categoryName: string | null;
+        ratePct: number;
+        appliesTo: string;
+        timezone: string;
+        isActive: boolean;
+        isEnabled: boolean;
+        archivedAt: string | null;
+        validFrom: string;
+        validTo: string | null;
+        notes: string | null;
+        createdAt: string;
+      }>
+    >(`/marketplace/admin/commission-rules${suffix}`, { token });
+  },
+
+  commissionRulePresets(token: string) {
+    return request<
+      Array<{ code: string; name: string; kind: "event" | "promo" | "standard" }>
+    >("/marketplace/admin/commission-rules/presets", { token });
+  },
+
+  previewCommissionRule(
+    token: string,
+    body: { ruleId?: string; ratePct?: number },
+  ) {
+    return request<{
+      unpaidEntryCount: number;
+      unpaidGross: number;
+      currentAccruedCommission: number;
+      estimatedCommissionAtRate: number;
+      delta: number;
+      ratePct: number;
+      note: string;
+    }>("/marketplace/admin/commission-rules/preview", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  createCommissionRule(
+    token: string,
+    body: Record<string, unknown>,
+  ) {
+    return request("/marketplace/admin/commission-rules", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  updateCommissionRule(
+    token: string,
+    id: string,
+    body: Record<string, unknown>,
+  ) {
+    return request(`/marketplace/admin/commission-rules/${id}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  archiveCommissionRule(token: string, id: string) {
+    return request(`/marketplace/admin/commission-rules/${id}/archive`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
+  },
+
+  listSettlements(
+    token: string,
+    params?: string | {
+      vendorId?: string;
+      status?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      settlementNumber?: string;
+    },
+  ) {
+    const qs = new URLSearchParams();
+    if (typeof params === "string") {
+      if (params) qs.set("vendorId", params);
+    } else if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, String(v));
+      });
+    }
+    const suffix = qs.toString() ? `?${qs}` : "";
     return request<
       Array<{
         id: string;
         settlementNumber: string;
         vendorId: string;
         vendorName: string;
+        vendorPhone?: string | null;
         periodStart: string;
         periodEnd: string;
         grossSales: number;
         commissionTotal: number;
+        adjustmentsTotal?: number;
         netPayable: number;
+        amountPaid?: number;
+        balanceDue?: number;
         status: string;
         payoutReference: string | null;
         payoutReceiptKey: string | null;
         payoutReceiptUrl: string | null;
         paidAt: string | null;
         createdAt: string;
+        receiptQrPayload?: string;
         items: Array<{
           entryId: string;
           orderNumber: string;
@@ -1557,8 +1877,15 @@ export const adminApi = {
           commissionAmount: number;
           netPayable: number;
         }>;
+        payments?: Array<{
+          id: string;
+          amount: number;
+          paidAt: string;
+          paymentMethod: string | null;
+          payoutReference: string | null;
+        }>;
       }>
-    >(`/marketplace/admin/settlements${qs}`, { token });
+    >(`/marketplace/admin/settlements${suffix}`, { token });
   },
 
   createSettlement(
@@ -1568,9 +1895,36 @@ export const adminApi = {
       periodStart?: string;
       periodEnd?: string;
       entryIds?: string[];
+      status?: "draft" | "pending_payment" | "approved";
+      notes?: string;
     },
   ) {
     return request("/marketplace/admin/settlements", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  previewSettlement(
+    token: string,
+    body: { vendorId: string; entryIds?: string[] },
+  ) {
+    return request<{
+      entryCount: number;
+      grossSales: number;
+      commissionTotal: number;
+      adjustmentsTotal: number;
+      netPayable: number;
+      items: Array<{
+        entryId: string;
+        orderNumber: string;
+        grossAmount: number;
+        ratePct: number;
+        commissionAmount: number;
+        netPayable: number;
+      }>;
+    }>("/marketplace/admin/settlements/preview", {
       method: "POST",
       token,
       body: JSON.stringify(body),
@@ -1584,6 +1938,10 @@ export const adminApi = {
       payoutReference?: string;
       payoutReceiptKey?: string;
       paidAt?: string;
+      amount?: number;
+      paymentMethod?: string;
+      markFullyPaid?: boolean;
+      idempotencyKey?: string;
     },
   ) {
     return request(`/marketplace/admin/settlements/${id}/mark-paid`, {
@@ -1591,6 +1949,133 @@ export const adminApi = {
       token,
       body: JSON.stringify(body ?? {}),
     });
+  },
+
+  addSettlementPayment(
+    token: string,
+    id: string,
+    body: {
+      amount: number;
+      payoutReference?: string;
+      payoutReceiptKey?: string;
+      paidAt?: string;
+      paymentMethod?: string;
+      markFullyPaid?: boolean;
+      idempotencyKey?: string;
+    },
+  ) {
+    return request(`/marketplace/admin/settlements/${id}/payments`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  cancelSettlement(token: string, id: string) {
+    return request(`/marketplace/admin/settlements/${id}/cancel`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
+  },
+
+  sendSettlementWhatsApp(
+    token: string,
+    id: string,
+    body?: { phone?: string; message?: string },
+  ) {
+    return request<{
+      ok: boolean;
+      mode: string;
+      deepLink: string | null;
+      error: string | null;
+    }>(`/marketplace/admin/settlements/${id}/whatsapp`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body ?? {}),
+    });
+  },
+
+  logSettlementCopy(token: string, id: string) {
+    return request(`/marketplace/admin/settlements/${id}/log-copy`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
+  },
+
+  listAdjustments(
+    token: string,
+    params?: { vendorId?: string; status?: string },
+  ) {
+    const qs = new URLSearchParams();
+    if (params?.vendorId) qs.set("vendorId", params.vendorId);
+    if (params?.status) qs.set("status", params.status);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<
+      Array<{
+        id: string;
+        adjustmentNumber: string;
+        vendorId: string;
+        vendorName: string;
+        settlementId: string | null;
+        commissionEntryId: string | null;
+        adjustmentType: string;
+        originalAmount: number | null;
+        adjustmentAmount: number;
+        reason: string;
+        status: string;
+        createdAt: string;
+        approvedAt: string | null;
+      }>
+    >(`/marketplace/admin/adjustments${suffix}`, { token });
+  },
+
+  createAdjustment(token: string, body: Record<string, unknown>) {
+    return request("/marketplace/admin/adjustments", {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    });
+  },
+
+  approveAdjustment(token: string, id: string) {
+    return request(`/marketplace/admin/adjustments/${id}/approve`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
+  },
+
+  voidAdjustment(token: string, id: string) {
+    return request(`/marketplace/admin/adjustments/${id}/void`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    });
+  },
+
+  listCommissionAudit(
+    token: string,
+    params?: { entityType?: string; limit?: number },
+  ) {
+    const qs = new URLSearchParams();
+    if (params?.entityType) qs.set("entityType", params.entityType);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const suffix = qs.toString() ? `?${qs}` : "";
+    return request<
+      Array<{
+        id: string;
+        entityType: string;
+        entityId: string;
+        action: string;
+        actorId: string | null;
+        before: unknown;
+        after: unknown;
+        note: string | null;
+        createdAt: string;
+      }>
+    >(`/marketplace/admin/commission-audit${suffix}`, { token });
   },
 
   listOrderFeedback(token: string, limit?: number) {

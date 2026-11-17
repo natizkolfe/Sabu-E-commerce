@@ -7,12 +7,20 @@ import { createHash, randomBytes } from 'crypto';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../../database/database.service';
 import type { AuthUser } from '../iam/auth.types';
+import {
+  commissionFromGross,
+  money2,
+} from './commission-engine';
+import { CommissionsFinanceService } from './commissions-finance.service';
 
 @Injectable()
 export class MarketplaceService {
   readonly schema = 'marketplace' as const;
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly finance: CommissionsFinanceService,
+  ) {}
 
   async listVendors(opts?: { status?: string; q?: string }) {
     const params: unknown[] = [];
@@ -515,8 +523,9 @@ export class MarketplaceService {
            payout_reference = COALESCE($2, payout_reference),
            payout_receipt_key = COALESCE($3, payout_receipt_key),
            paid_at = $4,
+           amount_paid = COALESCE(net_payable, amount_paid),
            updated_at = now()
-         WHERE id = $1 AND status IN ('draft','approved')`,
+         WHERE id = $1 AND status IN ('draft','approved','pending_payment','partially_paid','adjustment_required')`,
         [
           id,
           body.payoutReference ?? null,
@@ -570,6 +579,7 @@ export class MarketplaceService {
   /**
    * Accrue commission for vendor slices of an order (idempotent).
    * Call after payment verified / delivery completed.
+   * Rates are snapshotted — later rule changes never rewrite history.
    */
   async accrueOrderCommissions(orderId: string) {
     const { rows: lines } = await this.db.query<{
@@ -584,21 +594,31 @@ export class MarketplaceService {
     );
     if (!lines.length) return { created: 0 };
 
-    const rule = await this.getGlobalCommissionRule();
+    const { rows: orderRows } = await this.db.query<{ created_at: Date }>(
+      `SELECT created_at FROM sales.orders WHERE id = $1`,
+      [orderId],
+    );
+    const at = orderRows[0]?.created_at ?? new Date();
+
     let created = 0;
     for (const line of lines) {
-      const { rows: vendors } = await this.db.query<{
-        commission_rate_pct: string | null;
-      }>(
-        `SELECT commission_rate_pct::text FROM marketplace.vendors WHERE id = $1`,
-        [line.vendor_id],
+      const { rows: catRows } = await this.db.query<{ category_id: string }>(
+        `SELECT pc.category_id
+         FROM sales.order_items oi
+         JOIN catalog.product_categories pc ON pc.product_id = oi.product_id
+         WHERE oi.order_id = $1 AND oi.vendor_id = $2
+         GROUP BY pc.category_id
+         ORDER BY sum(oi.line_total) DESC
+         LIMIT 1`,
+        [orderId, line.vendor_id],
       );
-      const rate =
-        vendors[0]?.commission_rate_pct != null
-          ? Number(vendors[0].commission_rate_pct)
-          : rule.ratePct;
+      const resolved = await this.finance.resolveCommissionRate({
+        vendorId: line.vendor_id,
+        categoryId: catRows[0]?.category_id ?? null,
+        at,
+      });
       const gross = Number(line.gross);
-      const commission = Math.round((gross * rate) / 100 * 100) / 100;
+      const commission = commissionFromGross(gross, resolved.ratePct);
       const key = `sale:${orderId}:${line.vendor_id}`;
       const { rowCount } = await this.db.query(
         `INSERT INTO marketplace.commission_entries (
@@ -611,9 +631,9 @@ export class MarketplaceService {
         [
           orderId,
           line.vendor_id,
-          (rule as { id?: string }).id ?? null,
-          gross,
-          rate,
+          resolved.ruleId,
+          money2(gross),
+          resolved.ratePct,
           commission,
           key,
         ],
