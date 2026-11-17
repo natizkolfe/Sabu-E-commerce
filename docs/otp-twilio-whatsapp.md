@@ -25,7 +25,9 @@ TWILIO_VERIFY_SERVICE_SID=VAxxxxxxxx     # Verify → Services → Sabu
 
 # Production safety
 NODE_ENV=production
-AUTH_DEV_RETURN_OTP=false
+# true = show OTP on login screen when SMS/WhatsApp did not send a provider-managed code
+# (temporary until Ethiopia WhatsApp works). Set false once WhatsApp OTP is live.
+AUTH_DEV_RETURN_OTP=true
 
 # Optional
 OTP_BRAND_NAME=Sabu

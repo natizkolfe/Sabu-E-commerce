@@ -105,12 +105,19 @@ export class AuthService {
     }
 
     const delivery = await this.otpDelivery.deliverOtp(phone, code);
+    // Temporary: show code on login UI when AUTH_DEV_RETURN_OTP=true
+    // (e.g. until Ethiopia WhatsApp is configured). Never for Twilio Verify
+    // codes — those are only in the SMS.
+    const showOnScreen =
+      this.config.get('AUTH_DEV_RETURN_OTP') === 'true' &&
+      !delivery.providerManagedCode;
 
-    // In production without a working channel, surface a clear error.
+    // In production without a working channel, fail — unless on-screen OTP is enabled.
     if (
       isProduction &&
       !delivery.ok &&
-      delivery.status !== 'pending_click'
+      delivery.status !== 'pending_click' &&
+      !showOnScreen
     ) {
       const twilioHint = delivery.error?.includes('template')
         ? ' Twilio trial requires Verify — set TWILIO_VERIFY_SERVICE_SID.'
@@ -133,20 +140,21 @@ export class AuthService {
       [user.id, phone, purpose, codeHash, expiresAt],
     );
 
-    const returnOtp =
-      !isProduction &&
-      this.config.get('AUTH_DEV_RETURN_OTP') === 'true' &&
-      !delivery.providerManagedCode;
+    if (showOnScreen && isProduction) {
+      this.logger.warn(
+        `AUTH_DEV_RETURN_OTP=true — returning OTP in API response for ${phone.slice(0, 4)}*** (temporary)`,
+      );
+    }
 
     return {
       ok: true,
       expiresAt: expiresAt.toISOString(),
-      channel: delivery.channel,
-      deliveryStatus: delivery.status,
+      channel: showOnScreen ? 'dev' : delivery.channel,
+      deliveryStatus: showOnScreen ? 'on_screen' : delivery.status,
       ...(delivery.deepLink && !delivery.ok
         ? { whatsappDeepLink: delivery.deepLink }
         : {}),
-      ...(returnOtp ? { devCode: code } : {}),
+      ...(showOnScreen ? { devCode: code } : {}),
     };
   }
 

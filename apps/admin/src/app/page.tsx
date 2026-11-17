@@ -63,7 +63,11 @@ export default function AdminHome() {
     try {
       const res = await adminApi.requestOtp(phone, "Admin");
       setDevCode(res.devCode ?? null);
-      if (res.channel === "sms") {
+      if (res.devCode) {
+        setOtpHint(
+          "Temporary on-screen code (until WhatsApp is set up). Enter the digits below.",
+        );
+      } else if (res.channel === "sms") {
         setOtpHint("Code sent by SMS (Twilio). Check your US phone.");
       } else if (res.channel === "whatsapp") {
         setOtpHint(
