@@ -20,9 +20,11 @@ export default function CartPage() {
         </h1>
         <p className="mt-2 text-sm text-sabu-moss">
           {isGuest
-            ? "Shopping as guest — no account required."
-            : "Prices are re-checked at checkout."}{" "}
-          Delivery: ETB 150.
+            ? "Shopping as guest. No account required."
+            : "Prices are re-checked at checkout."}
+          {items.length > 0
+            ? " Delivery is calculated at checkout based on your location."
+            : ""}
           {wholesaleActive
             ? " Wholesale tiers applied on qualifying lines."
             : hasBulk
