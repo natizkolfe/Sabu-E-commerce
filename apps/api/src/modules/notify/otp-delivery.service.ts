@@ -9,9 +9,14 @@ export type OtpDeliveryResult = {
   channel: OtpDeliveryChannel;
   ok: boolean;
   status: string;
+  /** Twilio Verify generated the code — verify via checkSmsOtp(). */
+  providerManagedCode?: boolean;
   error?: string | null;
   deepLink?: string | null;
 };
+
+/** Stored as otp_challenges.code_hash when Twilio Verify owns the code. */
+export const TWILIO_VERIFY_MARKER = 'provider:twilio_verify';
 
 @Injectable()
 export class OtpDeliveryService {
@@ -24,9 +29,8 @@ export class OtpDeliveryService {
   ) {}
 
   /**
-   * US (+1) → Twilio SMS.
+   * US (+1) → Twilio SMS / Verify.
    * Ethiopia (+251) → WhatsApp.
-   * Others → WhatsApp first, then SMS if configured.
    */
   resolveChannel(phoneE164: string): OtpDeliveryChannel {
     if (phoneE164.startsWith('+1')) return 'sms';
@@ -40,9 +44,14 @@ export class OtpDeliveryService {
     const text = `${brand} login code: ${code}. Expires in 10 minutes. Do not share this code.`;
 
     if (channel === 'sms') {
-      const sms = await this.twilio.sendSms(phoneE164, text);
+      const sms = await this.twilio.sendLoginOtp(phoneE164, code);
       if (sms.ok) {
-        return { channel: 'sms', ok: true, status: sms.status };
+        return {
+          channel: 'sms',
+          ok: true,
+          status: sms.status,
+          providerManagedCode: Boolean(sms.providerManagedCode),
+        };
       }
       this.logger.warn(
         `OTP SMS failed for ${phoneE164}: ${sms.error ?? sms.status}`,
@@ -65,7 +74,6 @@ export class OtpDeliveryService {
       };
     }
 
-    // Cloud failed or wa.me-only: still report channel so UI can guide.
     return {
       channel: 'whatsapp',
       ok: wa.ok && wa.status !== 'failed',
@@ -73,5 +81,13 @@ export class OtpDeliveryService {
       error: wa.error,
       deepLink: wa.deepLink,
     };
+  }
+
+  async checkSmsOtp(phoneE164: string, code: string) {
+    return this.twilio.checkVerification(phoneE164, code);
+  }
+
+  usesTwilioVerify() {
+    return this.twilio.isVerifyConfigured();
   }
 }

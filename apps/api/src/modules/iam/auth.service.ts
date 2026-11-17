@@ -20,7 +20,10 @@ import {
 } from './auth.types';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
-import { OtpDeliveryService } from '../notify/otp-delivery.service';
+import {
+  OtpDeliveryService,
+  TWILIO_VERIFY_MARKER,
+} from '../notify/otp-delivery.service';
 
 type UserRow = {
   id: string;
@@ -90,12 +93,6 @@ export class AuthService {
     const code = generateOtpCode(6);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await this.db.query(
-      `INSERT INTO iam.otp_challenges (user_id, destination, purpose, code_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user.id, phone, purpose, sha256(code), expiresAt],
-    );
-
     // Never log plaintext OTP in production. Dev may return it only when explicitly enabled.
     if (!isProduction) {
       this.logger.log(
@@ -108,8 +105,6 @@ export class AuthService {
     }
 
     const delivery = await this.otpDelivery.deliverOtp(phone, code);
-    const returnOtp =
-      !isProduction && this.config.get('AUTH_DEV_RETURN_OTP') === 'true';
 
     // In production without a working channel, surface a clear error.
     if (
@@ -117,12 +112,31 @@ export class AuthService {
       !delivery.ok &&
       delivery.status !== 'pending_click'
     ) {
+      const twilioHint = delivery.error?.includes('template')
+        ? ' Twilio trial requires Verify — set TWILIO_VERIFY_SERVICE_SID.'
+        : '';
       throw new BadRequestException(
         delivery.channel === 'sms'
-          ? 'Could not send SMS code. Check Twilio configuration.'
+          ? `Could not send SMS code. Check Twilio configuration.${twilioHint}`
           : 'Could not send WhatsApp code. Check WhatsApp Cloud API / OTP template.',
       );
     }
+
+    // Twilio Verify generates its own code — store a marker instead of our hash.
+    const codeHash = delivery.providerManagedCode
+      ? sha256(TWILIO_VERIFY_MARKER)
+      : sha256(code);
+
+    await this.db.query(
+      `INSERT INTO iam.otp_challenges (user_id, destination, purpose, code_hash, expires_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user.id, phone, purpose, codeHash, expiresAt],
+    );
+
+    const returnOtp =
+      !isProduction &&
+      this.config.get('AUTH_DEV_RETURN_OTP') === 'true' &&
+      !delivery.providerManagedCode;
 
     return {
       ok: true,
@@ -184,7 +198,19 @@ export class AuthService {
         throw new UnauthorizedException('Too many attempts. Request a new code.');
       }
 
-      const match = Buffer.compare(challenge.code_hash, sha256(dto.code)) === 0;
+      const isTwilioVerify = Buffer.compare(
+        challenge.code_hash,
+        sha256(TWILIO_VERIFY_MARKER),
+      ) === 0;
+
+      let match = false;
+      if (isTwilioVerify) {
+        const checked = await this.otpDelivery.checkSmsOtp(phone, dto.code);
+        match = checked.ok;
+      } else {
+        match = Buffer.compare(challenge.code_hash, sha256(dto.code)) === 0;
+      }
+
       if (!match) {
         await client.query(
           `UPDATE iam.otp_challenges SET attempts = attempts + 1 WHERE id = $1`,
