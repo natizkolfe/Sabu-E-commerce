@@ -752,23 +752,32 @@ ${adj}
   const receiptSettlement = settlements.find((s) => s.id === vendorReceiptId);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 text-[#e8ebe9]">
+    <main className="min-h-screen bg-[#0f1412] px-4 py-10 text-[#eef2ef] sm:px-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[#8a9]">
+          <Link href="/?modules=1" className="text-sm text-[#8aa897]">
+            ← Admin modules
+          </Link>
+          <p className="mt-3 text-xs uppercase tracking-[0.2em] text-[#8aa897]">
             Marketplace finance
           </p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">
             Vendor commissions &amp; payouts
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#9aa]">
+          <p className="mt-2 max-w-2xl text-sm text-[#9eb0a6]">
             Rules, sales, settlements, and adjustments. Accrued rates stay
             frozen on each sale.
           </p>
         </div>
-        <Link href="/vendors" className="text-sm text-[#9dcdb4] underline">
-          Manage vendors
-        </Link>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link href="/vendors" className="text-[#8aa897] underline">
+            Manage vendors
+          </Link>
+          <Link href="/?modules=1" className="text-[#8aa897] underline">
+            All modules
+          </Link>
+        </div>
       </div>
 
       {message ? (
@@ -1962,5 +1971,6 @@ ${adj}
         </section>
       ) : null}
     </div>
+    </main>
   );
 }
