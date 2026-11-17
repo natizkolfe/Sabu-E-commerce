@@ -93,7 +93,7 @@ Module boundaries: a module reads/writes only its own schema; cross-module side 
 ## Auth (phone OTP)
 
 ```bash
-# 1) Request OTP (dev returns devCode)
+# 1) Request OTP (dev may return devCode when AUTH_DEV_RETURN_OTP=true)
 curl -X POST http://localhost:3001/v1/auth/otp/request \
   -H "Content-Type: application/json" \
   -d "{\"phone\":\"+251911000001\",\"fullName\":\"Test Customer\"}"
@@ -107,7 +107,16 @@ curl -X POST http://localhost:3001/v1/auth/otp/verify \
 curl http://localhost:3001/v1/auth/me -H "Authorization: Bearer <accessToken>"
 ```
 
-New customers auto-register as `retail_customer` with a `crm.customers` row. SMS gateway is not wired yet — OTP is logged and returned as `devCode` in development.
+New customers auto-register as `retail_customer` with a `crm.customers` row.
+
+**Production delivery**
+
+| Phone | Channel |
+|-------|---------|
+| `+1…` (US) | Twilio Verify SMS |
+| `+251…` (Ethiopia) | WhatsApp Cloud API (template) |
+
+Full setup (Twilio account, Verify service, verified caller IDs, Railway variables, troubleshooting): **[docs/otp-twilio-whatsapp.md](docs/otp-twilio-whatsapp.md)**.
 
 ## Status
 

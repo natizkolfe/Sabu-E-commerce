@@ -118,6 +118,7 @@ Tune later if you scale replicas:
 | Variable | Dev | Production |
 |----------|-----|------------|
 | `AUTH_DEV_RETURN_OTP` | OK for local | **Must be off / false** when brother + real users share Admin |
+| `TWILIO_*` / Verify SID | Optional locally | Required for US admin SMS OTP — see [otp-twilio-whatsapp.md](./otp-twilio-whatsapp.md) |
 | Public Postgres TCP proxy | Temporary only | Prefer private URL only |
 
 ### 4.6 Delete unused services
