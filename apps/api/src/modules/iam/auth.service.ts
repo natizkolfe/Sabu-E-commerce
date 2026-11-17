@@ -46,12 +46,16 @@ export class AuthService {
     const purpose = dto.purpose ?? 'login';
     const clientType = dto.clientType ?? 'web';
     const isAdminClient = clientType === 'admin_web';
+    const isProduction = this.config.get('NODE_ENV') === 'production';
+
+    if (isAdminClient) {
+      this.assertAdminPhoneAllowlisted(phone);
+    }
 
     let user = await this.findUserByPhone(phone);
 
     if (!user && purpose === 'login') {
       if (isAdminClient) {
-        // Dev/local admin bootstrap: create a staff ops admin instead of a retail customer.
         user = await this.registerStaffAdmin(
           phone,
           dto.fullName ?? 'Sabu Admin',
@@ -69,7 +73,8 @@ export class AuthService {
     }
 
     if (isAdminClient) {
-      user = await this.ensureStaffAdminAccess(user, dto.fullName);
+      // Allowlisted phones only — ensure staff + ops admin role.
+      user = await this.ensureAllowlistedStaffAdmin(user, dto.fullName);
     }
 
     if (user.locked_until && user.locked_until > new Date()) {
@@ -89,12 +94,19 @@ export class AuthService {
       [user.id, phone, purpose, sha256(code), expiresAt],
     );
 
-    // SMS gateway not wired yet — log in all envs; optionally return in response for local/dev.
-    this.logger.log(`OTP for ${phone}: ${code} (expires ${expiresAt.toISOString()}) ip=${ip ?? '-'}`);
+    // Never log plaintext OTP in production. Dev may return it only when explicitly enabled.
+    if (!isProduction) {
+      this.logger.log(
+        `OTP for ${phone}: ${code} (expires ${expiresAt.toISOString()}) ip=${ip ?? '-'}`,
+      );
+    } else {
+      this.logger.log(
+        `OTP issued for ${phone.slice(0, 4)}*** (expires ${expiresAt.toISOString()}) ip=${ip ?? '-'}`,
+      );
+    }
 
     const returnOtp =
-      this.config.get('AUTH_DEV_RETURN_OTP') === 'true' ||
-      this.config.get('NODE_ENV') !== 'production';
+      !isProduction && this.config.get('AUTH_DEV_RETURN_OTP') === 'true';
 
     return {
       ok: true,
@@ -109,6 +121,11 @@ export class AuthService {
 
     const user = await this.findUserByPhone(phone);
     if (!user) throw new UnauthorizedException('Invalid phone or code');
+
+    if (clientType === 'admin_web') {
+      this.assertAdminPhoneAllowlisted(phone);
+      await this.assertExistingStaffAdmin(user);
+    }
 
     if (user.locked_until && user.locked_until > new Date()) {
       throw new UnauthorizedException('Account is temporarily locked');
@@ -401,11 +418,63 @@ export class AuthService {
     }
   }
 
+  private static readonly DEFAULT_ADMIN_PHONES = [
+    '+251911129726',
+    '+14045101204',
+  ];
+
+  /** Admin login is restricted to an explicit phone allowlist. */
+  private getAdminPhoneAllowlist(): Set<string> {
+    const raw =
+      this.config.get<string>('AUTH_ADMIN_PHONE_ALLOWLIST')?.trim() ||
+      AuthService.DEFAULT_ADMIN_PHONES.join(',');
+    return new Set(
+      raw
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean),
+    );
+  }
+
+  private assertAdminPhoneAllowlisted(phone: string): void {
+    if (!this.getAdminPhoneAllowlist().has(phone)) {
+      throw new UnauthorizedException(
+        'This phone is not authorized for admin access',
+      );
+    }
+  }
+
+  /** Reject non-staff-admin accounts (after allowlist check). */
+  private async assertExistingStaffAdmin(user: UserRow): Promise<void> {
+    if (user.user_type === 'driver') {
+      throw new UnauthorizedException(
+        'Driver accounts cannot sign in to admin. Use a staff phone.',
+      );
+    }
+    if (user.user_type !== 'staff') {
+      throw new UnauthorizedException('No admin account for this phone');
+    }
+    const { rows } = await this.db.query<{ ok: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM iam.user_roles ur
+         JOIN iam.roles r ON r.id = ur.role_id
+         WHERE ur.user_id = $1
+           AND r.code IN ('et_operations_admin', 'super_admin')
+           AND (ur.expires_at IS NULL OR ur.expires_at > now())
+       ) AS ok`,
+      [user.id],
+    );
+    if (!rows[0]?.ok) {
+      throw new UnauthorizedException('No admin account for this phone');
+    }
+  }
+
   /**
-   * Admin web login: promote retail accounts created by mistake and ensure
-   * et_operations_admin (includes delivery.dispatch).
+   * For allowlisted admin phones only: promote to staff + et_operations_admin
+   * if needed so the designated owners can always sign in.
    */
-  private async ensureStaffAdminAccess(
+  private async ensureAllowlistedStaffAdmin(
     user: UserRow,
     fullName?: string,
   ): Promise<UserRow> {
@@ -437,7 +506,6 @@ export class AuthService {
         [user.id],
       );
 
-      // Drop retail_customer so JWT permissions are ops-only, not mixed customer.
       await client.query(
         `DELETE FROM iam.user_roles ur
          USING iam.roles r

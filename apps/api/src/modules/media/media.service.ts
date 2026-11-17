@@ -103,7 +103,11 @@ export class MediaService {
 
   async resolve(storageKey: string) {
     const safe = storageKey.replace(/\\/g, '/').replace(/\.\./g, '');
-    const abs = path.join(this.root, ...safe.split('/'));
+    const abs = path.resolve(this.root, ...safe.split('/').filter(Boolean));
+    const rootAbs = path.resolve(this.root);
+    if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) {
+      throw new NotFoundException('Media not found');
+    }
     try {
       await fs.access(abs);
     } catch {

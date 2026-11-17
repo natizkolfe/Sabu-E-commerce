@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
@@ -35,10 +35,16 @@ export class FinanceController {
     return this.financeService.ensureReceiptForOrder(orderId);
   }
 
-  /** Public lookup by receipt number (for customer share / QR). */
+  /**
+   * Public lookup by receipt number + matching customer phone (prevents
+   * sequential receipt-number enumeration of other customers' PII).
+   */
   @Public()
   @Get('receipts/:receiptNumber')
-  publicReceipt(@Param('receiptNumber') receiptNumber: string) {
-    return this.financeService.getCustomerReceipt(receiptNumber);
+  publicReceipt(
+    @Param('receiptNumber') receiptNumber: string,
+    @Query('phone') phone?: string,
+  ) {
+    return this.financeService.getPublicCustomerReceipt(receiptNumber, phone);
   }
 }

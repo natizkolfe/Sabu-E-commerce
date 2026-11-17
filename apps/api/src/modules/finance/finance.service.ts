@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 
 /** Owns PostgreSQL schema finance. Cross-module side effects via core.outbox_events. */
@@ -132,6 +136,45 @@ export class FinanceService {
   }
 
   /**
+   * Public share view: requires matching customer phone so receipt numbers
+   * cannot be enumerated for other customers' PII.
+   */
+  async getPublicCustomerReceipt(receiptNumber: string, phone?: string) {
+    const normalized = (phone ?? '').trim();
+    if (!/^\+[1-9][0-9]{7,14}$/.test(normalized)) {
+      throw new BadRequestException(
+        'phone query param required in E.164 (e.g. +251911234567)',
+      );
+    }
+
+    const full = await this.getCustomerReceipt(receiptNumber);
+    if (!full.customerPhone || full.customerPhone !== normalized) {
+      // Same message as missing to avoid receipt-number probing.
+      throw new NotFoundException('Receipt not found');
+    }
+
+    return {
+      receiptNumber: full.receiptNumber,
+      orderNumber: full.orderNumber,
+      orderType: full.orderType,
+      specialOrderNumber: full.specialOrderNumber,
+      productName: full.productName,
+      customerName: maskName(full.customerName),
+      customerPhoneMasked: maskPhone(full.customerPhone),
+      paymentMethodCode: full.paymentMethodCode,
+      paymentStatus: full.paymentStatus,
+      subtotal: full.subtotal,
+      deliveryFee: full.deliveryFee,
+      taxTotal: full.taxTotal,
+      discountTotal: full.discountTotal,
+      grandTotal: full.grandTotal,
+      currency: full.currency,
+      lineItems: full.lineItems,
+      createdAt: full.createdAt,
+    };
+  }
+
+  /**
    * Create (or return existing) customer receipt for a paid/confirmed order.
    */
   async ensureReceiptForOrder(orderId: string) {
@@ -231,4 +274,20 @@ export class FinanceService {
     );
     return `RCP-${period}-${String(Number(rows[0].next_value)).padStart(6, '0')}`;
   }
+}
+
+function maskPhone(phone: string | null) {
+  if (!phone) return null;
+  if (phone.length < 6) return '***';
+  return `${phone.slice(0, 4)}***${phone.slice(-3)}`;
+}
+
+function maskName(name: string | null) {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'Customer';
+  if (parts.length === 1) {
+    const n = parts[0];
+    return n.length <= 2 ? `${n[0] ?? '*'}*` : `${n.slice(0, 1)}***`;
+  }
+  return `${parts[0]} ${parts[parts.length - 1].slice(0, 1)}.`;
 }

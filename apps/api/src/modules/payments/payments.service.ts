@@ -373,8 +373,13 @@ export class PaymentsService {
     const base =
       this.config.get<string>('CHAPA_BASE_URL') ?? 'https://api.chapa.co/v1';
 
-    // Sandbox / offline mode: no secret → return mock checkout URL
+    // Sandbox / offline mode: no secret → return mock checkout URL (never in production)
     if (!secret) {
+      if (this.config.get('NODE_ENV') === 'production') {
+        throw new BadRequestException(
+          'Chapa is not configured. Set CHAPA_SECRET_KEY before accepting card payments.',
+        );
+      }
       this.logger.warn('CHAPA_SECRET_KEY missing — returning mock checkout URL');
       const checkoutUrl = `${input.returnUrl}?tx_ref=${encodeURIComponent(merchantRef)}&status=mock`;
       await this.db.query(
@@ -449,8 +454,16 @@ export class PaymentsService {
     );
     if (!providers[0]) throw new NotFoundException('Chapa provider missing');
 
+    const isProduction = this.config.get('NODE_ENV') === 'production';
     const secret = this.config.get<string>('CHAPA_WEBHOOK_SECRET') ?? '';
-    let signatureValid = !secret;
+    if (isProduction && !secret) {
+      this.logger.error(
+        'CHAPA_WEBHOOK_SECRET missing in production — rejecting webhook',
+      );
+      return { ok: false, reason: 'webhook_secret_required' };
+    }
+
+    let signatureValid = false;
     if (secret && signature) {
       const expected = createHmac('sha256', secret)
         .update(JSON.stringify(rawBody))
@@ -463,6 +476,9 @@ export class PaymentsService {
       } catch {
         signatureValid = false;
       }
+    } else if (!isProduction && !secret) {
+      // Local/dev without webhook secret: accept for sandbox testing only.
+      signatureValid = true;
     }
 
     const payload = rawBody as {
@@ -484,16 +500,22 @@ export class PaymentsService {
       [providers[0].id, eventId, signatureValid, JSON.stringify(rawBody)],
     );
 
-    if (!signatureValid && secret) {
+    if (!signatureValid) {
       return { ok: false, reason: 'invalid_signature' };
     }
 
     const txRef = payload.tx_ref;
     if (!txRef) return { ok: true, ignored: true };
 
-    // Verify with Chapa when secret present; mock auto-succeed
     const chapaSecret = this.config.get<string>('CHAPA_SECRET_KEY');
-    let verified = !chapaSecret;
+    if (isProduction && !chapaSecret) {
+      this.logger.error(
+        'CHAPA_SECRET_KEY missing in production — refusing to mark paid',
+      );
+      return { ok: false, reason: 'chapa_secret_required' };
+    }
+
+    let verified = false;
     if (chapaSecret) {
       const base =
         this.config.get<string>('CHAPA_BASE_URL') ?? 'https://api.chapa.co/v1';
@@ -515,9 +537,12 @@ export class PaymentsService {
           [txRef, verifyBody.data.reference],
         );
       }
+    } else if (!isProduction && payload.status === 'success') {
+      // Dev-only: trust payload status when Chapa isn't configured.
+      verified = true;
     }
 
-    if (!verified && payload.status !== 'success') {
+    if (!verified) {
       return { ok: true, verified: false };
     }
 
@@ -527,6 +552,9 @@ export class PaymentsService {
 
   /** Dev helper: complete a mock Chapa payment by tx_ref */
   async completeMockChapa(txRef: string) {
+    if (this.config.get('NODE_ENV') === 'production') {
+      throw new BadRequestException('Mock complete disabled in production');
+    }
     if (this.config.get('CHAPA_SECRET_KEY')) {
       throw new BadRequestException('Mock complete disabled when Chapa is configured');
     }
