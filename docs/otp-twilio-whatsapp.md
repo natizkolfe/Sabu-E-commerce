@@ -8,7 +8,15 @@ Login codes are sent by phone channel:
 | `+251…` (Ethiopia) | WhatsApp | Meta WhatsApp Cloud API |
 | Other | WhatsApp first | Same as Ethiopia |
 
-Admin sign-in is also limited to an allowlist (`AUTH_ADMIN_PHONE_ALLOWLIST`), currently including `+14045101204` and `+251911129726`.
+Admin sign-in is limited to an allowlist (`AUTH_ADMIN_PHONE_ALLOWLIST`):
+
+| Phone | Name | Role |
+|-------|------|------|
+| `+14045101204` | Natnael | Developer |
+| `+251911129726` | Henok Lule | Owner / Admin |
+| `+251911419193` | Mulu Seifu | Co-owner / Admin |
+
+The admin login screen shows these names; tap a person to fill their phone.
 
 ---
 

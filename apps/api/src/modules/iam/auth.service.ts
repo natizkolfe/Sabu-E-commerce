@@ -476,6 +476,7 @@ export class AuthService {
   private static readonly DEFAULT_ADMIN_PHONES = [
     '+251911129726',
     '+14045101204',
+    '+251911419193',
   ];
 
   /** Admin login is restricted to an explicit phone allowlist. */

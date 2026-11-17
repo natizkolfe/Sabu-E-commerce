@@ -32,6 +32,39 @@ const nav = [
   { href: "/studio/try-on", label: "Try-on (optional)" },
 ];
 
+/** Known staff phones shown on OTP login (tap to fill). */
+const STAFF_PHONES = [
+  {
+    phone: "+14045101204",
+    name: "Natnael",
+    role: "Developer",
+  },
+  {
+    phone: "+251911129726",
+    name: "Henok Lule",
+    role: "Owner / Admin",
+  },
+  {
+    phone: "+251911419193",
+    name: "Mulu Seifu",
+    role: "Co-owner / Admin",
+  },
+] as const;
+
+function normalizePhoneDigits(value: string) {
+  return value.replace(/[^\d+]/g, "");
+}
+
+function matchStaffPhone(value: string) {
+  const n = normalizePhoneDigits(value);
+  return STAFF_PHONES.find(
+    (s) =>
+      normalizePhoneDigits(s.phone) === n ||
+      normalizePhoneDigits(s.phone).endsWith(n.replace(/^\+/, "")) ||
+      n.endsWith(normalizePhoneDigits(s.phone).replace(/^\+/, "")),
+  );
+}
+
 export default function AdminHome() {
   const router = useRouter();
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -43,6 +76,7 @@ export default function AdminHome() {
   const [otpHint, setOtpHint] = useState<string | null>(null);
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [error, setError] = useState<string | null>(null);
+  const matchedStaff = matchStaffPhone(phone);
 
   useEffect(() => {
     const s = loadSession();
@@ -126,12 +160,59 @@ export default function AdminHome() {
           </p>
           {step === "phone" ? (
             <form onSubmit={requestOtp} className="mt-8 space-y-4">
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full border-b border-[#3a4a42] bg-transparent py-3 outline-none"
-                placeholder="+2519..."
-              />
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[#8aa897]">
+                  Staff accounts
+                </p>
+                <ul className="space-y-2">
+                  {STAFF_PHONES.map((staff) => {
+                    const selected =
+                      normalizePhoneDigits(phone) ===
+                      normalizePhoneDigits(staff.phone);
+                    return (
+                      <li key={staff.phone}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPhone(staff.phone);
+                            setError(null);
+                          }}
+                          className={`w-full border px-3 py-3 text-left transition ${
+                            selected
+                              ? "border-[#2f6b4f] bg-[#2f6b4f]/15"
+                              : "border-[#24302a] hover:border-[#2f6b4f]/60"
+                          }`}
+                        >
+                          <span className="block text-sm text-[#eef2ef]">
+                            {staff.name}{" "}
+                            <span className="text-[#8aa897]">
+                              ({staff.role})
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block text-xs text-[#9eb0a6]">
+                            {staff.phone}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              <label className="block text-xs text-[#8aa897]">
+                Phone
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="mt-1 w-full border-b border-[#3a4a42] bg-transparent py-3 text-sm text-[#eef2ef] outline-none"
+                  placeholder="+2519..."
+                />
+              </label>
+              {matchedStaff ? (
+                <p className="text-sm text-[#9dcdb4]">
+                  Signing in as <strong>{matchedStaff.name}</strong> (
+                  {matchedStaff.role})
+                </p>
+              ) : null}
               <button
                 type="submit"
                 className="w-full bg-[#2f6b4f] px-4 py-3 text-sm"
@@ -141,6 +222,14 @@ export default function AdminHome() {
             </form>
           ) : (
             <form onSubmit={verify} className="mt-8 space-y-4">
+              {matchedStaff ? (
+                <p className="text-sm text-[#9dcdb4]">
+                  Code for <strong>{matchedStaff.name}</strong> (
+                  {matchedStaff.role}) · {phone}
+                </p>
+              ) : (
+                <p className="text-xs text-[#8aa897]">Code sent to {phone}</p>
+              )}
               {otpHint && (
                 <p className="text-xs text-[#8aa897]">{otpHint}</p>
               )}
@@ -158,6 +247,19 @@ export default function AdminHome() {
                 className="w-full bg-[#2f6b4f] px-4 py-3 text-sm"
               >
                 Verify
+              </button>
+              <button
+                type="button"
+                className="w-full text-xs text-[#8aa897]"
+                onClick={() => {
+                  setStep("phone");
+                  setCode("");
+                  setDevCode(null);
+                  setOtpHint(null);
+                  setError(null);
+                }}
+              >
+                ← Change phone / person
               </button>
             </form>
           )}
