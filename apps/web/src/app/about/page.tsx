@@ -16,7 +16,7 @@ type AboutContent = Awaited<ReturnType<typeof api.getAboutContent>>;
 const FALLBACK: AboutContent = {
   headline: "About Sabu",
   intro:
-    "Sabu Online Shopping brings everyday products to your door across Ethiopia — local stock, bulk rates, and special orders when you need something we do not carry yet.",
+    "Sabu Online Shopping brings everyday products to your door across Ethiopia: local stock, bulk rates, and special orders when you need something we do not carry yet.",
   phone: "+251911129726",
   whatsappUrl: "https://wa.me/251911129726",
   instagramUrl: "https://www.instagram.com/sabusonlineshop/",
@@ -121,7 +121,7 @@ export default function AboutPage() {
               Customer questions
             </h2>
             <p className="mt-2 text-sm text-sabu-moss">
-              Delivery fees, tracking, payments, and more — kept here so checkout
+              Delivery fees, tracking, payments, and more. Kept here so checkout
               stays simple.
             </p>
             <ul className="mt-6 divide-y divide-sabu-mist/50 border-y border-sabu-mist/50">

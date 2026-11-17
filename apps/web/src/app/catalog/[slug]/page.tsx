@@ -283,7 +283,7 @@ export default function ProductDetailPage() {
             >
               {product.variants.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {v.name} — {formatEtb(v.price)}
+                  {v.name}: {formatEtb(v.price)}
                 </option>
               ))}
             </select>
@@ -340,7 +340,7 @@ export default function ProductDetailPage() {
               />
               <span>
                 <span className="font-medium text-sabu-ink">
-                  Buy in Bulk – Wholesale Pricing
+                  Buy in Bulk: Wholesale Pricing
                 </span>
                 <span className="mt-0.5 block text-xs">
                   Optional. Shows wholesale tiers and bulk quantities when

@@ -44,7 +44,7 @@ export function SiteFooter() {
             Sabu Online Shopping
           </p>
           <p className="mt-2 max-w-sm text-sm text-sabu-mist">
-            Everyday shopping for Ethiopia — every aisle, one checkout,
+            Everyday shopping for Ethiopia. Every aisle, one checkout,
             delivered to your door.
           </p>
           <p className="mt-4 text-sm">

@@ -32,7 +32,7 @@ function StarRow({
       <p className="text-sm font-medium text-sabu-ink">
         {label}
         {!required && (
-          <span className="font-normal text-sabu-moss"> — optional</span>
+          <span className="font-normal text-sabu-moss"> (optional)</span>
         )}
       </p>
       {hint && <p className="mt-0.5 text-xs text-sabu-moss">{hint}</p>}
@@ -161,7 +161,7 @@ export function OrderFeedbackForm({
           Your feedback
         </p>
         <h2 className="mt-2 font-[family-name:var(--font-syne)] text-2xl text-sabu-ink">
-          Thank you — we appreciate you
+          Thank you. We appreciate you
         </h2>
         <p className="mt-2 text-sm text-sabu-moss">
           Your rating helps Sabu Online Shopping feel better for the next
@@ -218,7 +218,7 @@ export function OrderFeedbackForm({
       </p>
       {!showDelivery && (
         <p className="mt-2 text-xs text-sabu-moss/80">
-          Delivery rating will be available later — once your order is on the
+          Delivery rating will be available later, once your order is on the
           way or delivered.
         </p>
       )}
@@ -255,7 +255,7 @@ export function OrderFeedbackForm({
         <fieldset>
           <legend className="text-sm font-medium text-sabu-ink">
             Would you recommend Sabu?
-            <span className="font-normal text-sabu-moss"> — optional</span>
+            <span className="font-normal text-sabu-moss"> (optional)</span>
           </legend>
           <div className="mt-2 flex gap-2">
             {(
@@ -282,7 +282,7 @@ export function OrderFeedbackForm({
 
         <label className="block text-sm font-medium text-sabu-ink">
           Give us a comment
-          <span className="font-normal text-sabu-moss"> — optional</span>
+          <span className="font-normal text-sabu-moss"> (optional)</span>
           <textarea
             rows={4}
             value={comment}

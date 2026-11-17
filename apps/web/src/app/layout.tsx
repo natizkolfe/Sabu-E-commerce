@@ -15,7 +15,7 @@ import { SiteFooter } from "../components/site-footer";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Sabu Online Shopping — Ethiopia",
+  title: "Sabu Online Shopping | Ethiopia",
   description:
     "Shop fashion, home, beauty, electronics, and more. Retail, wholesale, and Dubai special orders delivered across Ethiopia.",
 };

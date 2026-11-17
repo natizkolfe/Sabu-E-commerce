@@ -178,13 +178,13 @@ function CatalogInner() {
 
   const lead = useMemo(() => {
     if (bulk || wholesale)
-      return "Wholesale tiers kick in from 10+ units — built for shops and resellers.";
+      return "Wholesale tiers kick in from 10+ units, built for shops and resellers.";
     if (newArrivals)
       return "Fresh stock from across Sabu’s departments.";
     if (onSale) return "Compare-at deals while they last.";
     if (category)
       return "Browse this department with filters that match what you’re shopping for.";
-    return "Fashion, home, beauty, electronics, and more — one Ethiopian marketplace.";
+    return "Fashion, home, beauty, electronics, and more. One Ethiopian marketplace.";
   }, [bulk, category, newArrivals, onSale, wholesale]);
 
   const advancedFilterCount = useMemo(() => {

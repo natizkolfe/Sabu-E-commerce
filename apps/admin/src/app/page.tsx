@@ -73,7 +73,7 @@ export default function AdminHome() {
         setOtpHint(
           res.deliveryStatus === "sent"
             ? "Code sent on WhatsApp. Check your Ethiopian number."
-            : "WhatsApp delivery pending — open WhatsApp if linked, or check Cloud API / OTP template settings.",
+            : "WhatsApp delivery pending. Open WhatsApp if linked, or check Cloud API / OTP template settings.",
         );
       } else {
         setOtpHint(null);

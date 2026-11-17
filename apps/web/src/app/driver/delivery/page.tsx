@@ -162,7 +162,7 @@ function DeliveryInner() {
             <p className="mt-1 text-[#9dcdb4]">
               Nearest landmark: {data.landmarkName}
               {data.locationType === "landmark_nearby"
-                ? " (reference — not always the door)"
+                ? " (reference; not always the door)"
                 : ""}
             </p>
           )}

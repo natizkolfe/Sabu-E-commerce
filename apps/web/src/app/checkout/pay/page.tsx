@@ -126,7 +126,7 @@ function PayInner() {
                   onChange={() => setBankId(b.id)}
                 />
                 <span className="text-sabu-ink">
-                  <strong>{b.bankName}</strong> — {b.accountName}
+                  <strong>{b.bankName}</strong>: {b.accountName}
                   <br />
                   <span className="text-sabu-moss">
                     {b.accountNumberMasked} · {b.branchName}

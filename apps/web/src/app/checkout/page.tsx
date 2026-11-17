@@ -469,7 +469,7 @@ export default function CheckoutPage() {
           </h1>
           <p className="text-sabu-moss">
             {isGuest
-              ? "No account needed — place your order as a guest."
+              ? "No account needed. Place your order as a guest."
               : "Signed-in checkout with delivery across Ethiopia."}
           </p>
 
@@ -713,7 +713,7 @@ export default function CheckoutPage() {
               />
               <span>
                 <span className="font-medium text-sabu-ink">
-                  Buy in Bulk – Wholesale Pricing
+                  Buy in Bulk: Wholesale Pricing
                 </span>
                 <span className="mt-0.5 block text-xs">
                   Optional
@@ -877,7 +877,7 @@ export default function CheckoutPage() {
                   ))}
                   {filteredOtherBanks.length === 0 && (
                     <li className="px-3 py-2 text-xs text-sabu-moss">
-                      No other banks configured yet — use CBE or Telebirr, or ask
+                      No other banks configured yet. Use CBE or Telebirr, or ask
                       admin to add banks.
                     </li>
                   )}
@@ -957,7 +957,7 @@ export default function CheckoutPage() {
                       : "the total payable amount"}
                   </strong>{" "}
                   via {selectedMethod?.displayName ?? "the selected method"}.
-                  Submitting a reference does not prove payment — Sabu will
+                  Submitting a reference does not prove payment. Sabu will
                   verify before fulfillment.
                 </span>
               </label>

@@ -100,7 +100,7 @@ function ConfirmationInner() {
   function saveDetails() {
     if (!snapshot) return;
     const lines = [
-      "Sabu Online Shopping — Order confirmation",
+      "Sabu Online Shopping: Order confirmation",
       `Order: ${snapshot.orderNumber}`,
       `Customer: ${snapshot.recipientName ?? ""}`,
       `Phone: ${snapshot.recipientPhone ?? ""}`,

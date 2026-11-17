@@ -197,7 +197,7 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
 
   function pickPlace(lm: PlaceHit) {
     const formatted =
-      lm.formattedAddress || `${lm.name} — ${lm.area}, ${lm.city}`;
+      lm.formattedAddress || `${lm.name}, ${lm.area}, ${lm.city}`;
     onChange({
       ...value,
       lat: lm.lat,
@@ -324,7 +324,7 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
         !searchError &&
         listToShow.length === 0 && (
           <p className="text-xs text-sabu-moss">
-            No matches found — drop a pin on the map and add instructions below.
+            No matches found. Drop a pin on the map and add instructions below.
           </p>
         )}
       {query.trim().length < 2 && (
@@ -385,7 +385,7 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
       />
       <p className="text-xs text-sabu-moss">
         Tap the map to drop a pin, or drag the marker. Landmark is a navigation
-        reference — add building directions below.
+        reference. Add building directions below.
       </p>
 
       <label className="block text-sm text-sabu-moss">
@@ -400,7 +400,7 @@ export function DeliveryLocationPicker({ value, onChange }: Props) {
               confirmed: false,
             })
           }
-          placeholder="Optional — e.g. CBE Bole Branch"
+          placeholder="Optional, e.g. CBE Bole Branch"
           className="mt-1 w-full border-b border-sabu-moss/40 bg-transparent py-2 outline-none"
         />
       </label>

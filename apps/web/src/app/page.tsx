@@ -30,7 +30,7 @@ export default function Home() {
             Sabu
           </h1>
           <p className="sabu-rise sabu-rise-delay-2 mt-6 max-w-lg text-base text-sabu-mist sm:text-lg">
-            One store for everyday life — fashion, home, beauty, electronics,
+            One store for everyday life: fashion, home, beauty, electronics,
             and more. Local stock, bulk rates, and Dubai specials delivered
             across Ethiopia.
           </p>
@@ -57,7 +57,7 @@ export default function Home() {
             Departments
           </p>
           <h2 className="mt-3 max-w-2xl font-[family-name:var(--font-syne)] text-3xl tracking-tight text-sabu-ink sm:text-4xl">
-            Shop the whole aisle — not just one wardrobe.
+            Shop the whole aisle, not just one wardrobe.
           </h2>
           <p className="mt-4 max-w-xl text-sabu-moss">
             From kids and fashion to home living, kitchen, beauty, and
